@@ -414,7 +414,7 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
           </div>
 
           {/* THE TWO MANDATORY WORKSHOP ACTION BUTTONS */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             
             {/* BOUTON 1 : LANCÉ */}
             {matchedOrder.status === 'en_attente' ? (
@@ -424,13 +424,14 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
                 style={{
                   width: '100%',
                   padding: '16px',
-                  fontSize: '1.15rem',
+                  fontSize: '1.2rem',
                   fontWeight: '800',
                   letterSpacing: '0.02em',
-                  boxShadow: '0 6px 20px rgba(2, 132, 199, 0.4)'
+                  boxShadow: '0 6px 20px rgba(2, 132, 199, 0.4)',
+                  justifyContent: 'center'
                 }}
               >
-                <PlayCircle size={26} /> 1. LANCER LA COMMANDE (LANCÉ)
+                <PlayCircle size={26} /> 🚀 LANCÉ (Lancer la production)
               </button>
             ) : (
               <button
@@ -438,60 +439,41 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
                 disabled
                 style={{
                   width: '100%',
-                  padding: '14px',
-                  fontSize: '1rem',
+                  padding: '12px',
+                  fontSize: '0.95rem',
                   opacity: 0.8,
                   background: '#f1f5f9',
                   color: '#475569',
                   borderColor: '#cbd5e1',
                   cursor: 'not-allowed',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: '10px'
+                  justifyContent: 'center'
                 }}
               >
-                <Check size={20} style={{ color: 'var(--accent-emerald)' }} />
+                <Check size={18} style={{ color: 'var(--accent-emerald)' }} />
                 COMMANDE DÉJÀ LANCÉE
-                {matchedOrder.launchedAt && (
-                  <span style={{ fontSize: '0.8rem', fontWeight: 'normal', color: 'var(--text-muted)' }}>
-                    ({new Date(matchedOrder.launchedAt).toLocaleTimeString()})
-                  </span>
-                )}
               </button>
             )}
 
             {/* BOUTON 2 : FINI */}
             {matchedOrder.status === 'en_attente' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <button
                   className="btn btn-secondary btn-lg"
                   disabled
                   style={{
                     width: '100%',
-                    padding: '16px',
-                    fontSize: '1.1rem',
+                    padding: '14px',
+                    fontSize: '1.05rem',
                     fontWeight: '700',
                     background: '#e2e8f0',
                     color: '#94a3b8',
                     borderColor: '#cbd5e1',
-                    cursor: 'not-allowed'
+                    cursor: 'not-allowed',
+                    justifyContent: 'center'
                   }}
                 >
-                  <Lock size={22} style={{ color: '#64748b' }} /> 2. MARQUER FINI (VERROUILLÉ)
+                  <Lock size={20} style={{ color: '#64748b' }} /> ✅ FINI (Verrouillé - Lancez d'abord)
                 </button>
-                <div style={{
-                  fontSize: '0.8rem',
-                  color: 'var(--accent-rose)',
-                  textAlign: 'center',
-                  fontWeight: '600',
-                  background: '#fff1f2',
-                  padding: '6px',
-                  borderRadius: '6px',
-                  border: '1px dashed #fecdd3'
-                }}>
-                  ⚠️ Action impossible : Vous ne pouvez pas marquer "FINI" une commande non lancée. Lancez-la d'abord !
-                </div>
               </div>
             ) : matchedOrder.status === 'en_cours' ? (
               <button
@@ -500,72 +482,64 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
                 style={{
                   width: '100%',
                   padding: '18px',
-                  fontSize: '1.2rem',
+                  fontSize: '1.25rem',
                   fontWeight: '800',
                   letterSpacing: '0.02em',
-                  boxShadow: '0 6px 20px rgba(5, 150, 105, 0.4)'
+                  boxShadow: '0 6px 20px rgba(5, 150, 105, 0.4)',
+                  justifyContent: 'center'
                 }}
               >
-                <CheckCircle2 size={26} /> 2. MARQUER FABRICATION FINIE (FINI)
+                <CheckCircle2 size={26} /> ✅ FINI (Valider la fin de fabrication)
               </button>
             ) : (
               <div style={{
                 textAlign: 'center',
-                padding: '16px',
+                padding: '14px',
                 background: '#ecfdf5',
                 borderRadius: 'var(--radius-md)',
-                border: '2px solid var(--accent-emerald)'
+                border: '2px solid var(--accent-emerald)',
+                color: 'var(--accent-emerald)',
+                fontWeight: '800',
+                fontSize: '1.05rem'
               }}>
-                <div style={{ color: 'var(--accent-emerald)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '8px' }}>
-                  🎉 FABRICATION TERMINÉE ET VALIDÉE
-                </div>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => {
-                    updateOrderStatus(matchedOrder.id, 'en_attente');
-                    refreshOrders();
-                  }}
-                  style={{ marginTop: '4px' }}
-                >
-                  <RotateCcw size={14} /> Réinitialiser le statut (Test)
-                </button>
+                🎉 COMMANDE TERMINÉE (FINI)
               </div>
             )}
 
           </div>
         </div>
       ) : (
-        <div className="glass-card" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)', marginBottom: '24px' }}>
-          <QrCode size={48} style={{ color: 'var(--accent-purple)', opacity: 0.4, marginBottom: '12px' }} />
-          <h4 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: '6px' }}>Scannez un QR Code ou sélectionnez une commande</h4>
-          <p style={{ fontSize: '0.88rem' }}>Utilisez la caméra ci-dessus ou choisissez une commande dans la file d'attente ci-dessous.</p>
+        <div className="glass-card" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', marginBottom: '20px' }}>
+          <QrCode size={42} style={{ color: 'var(--accent-purple)', opacity: 0.4, marginBottom: '8px' }} />
+          <h4 style={{ fontSize: '1.05rem', color: 'var(--text-primary)', marginBottom: '4px' }}>Scannez un QR Code ou sélectionnez une commande</h4>
+          <p style={{ fontSize: '0.85rem' }}>Pointez la caméra ou touchez une commande ci-dessous pour afficher les boutons <strong>LANCÉ</strong> et <strong>FINI</strong>.</p>
         </div>
       )}
 
-      {/* QUICK SELECT LIST OF WORKSHOP ORDERS */}
-      <div className="glass-card" style={{ padding: '18px', background: '#ffffff' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-          <h4 style={{ fontSize: '1.05rem', margin: 0 }}>File d'attente Atelier ({orders.length})</h4>
+      {/* QUICK SELECT LIST OF WORKSHOP ORDERS WITH DIRECT INLINE BUTTONS */}
+      <div className="glass-card" style={{ padding: '16px', background: '#ffffff' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+          <h4 style={{ fontSize: '1rem', margin: 0, fontWeight: '800' }}>Commandes en Atelier ({orders.length})</h4>
           
           <div style={{ display: 'flex', gap: '4px' }}>
             <button
               className={`btn btn-sm ${activeFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setActiveFilter('all')}
-              style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+              style={{ fontSize: '0.75rem', padding: '3px 8px' }}
             >
               Toutes
             </button>
             <button
               className={`btn btn-sm ${activeFilter === 'pending' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setActiveFilter('pending')}
-              style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+              style={{ fontSize: '0.75rem', padding: '3px 8px' }}
             >
-              En attente ({pendingOrders.length})
+              Attente ({pendingOrders.length})
             </button>
             <button
               className={`btn btn-sm ${activeFilter === 'in_progress' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setActiveFilter('in_progress')}
-              style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+              style={{ fontSize: '0.75rem', padding: '3px 8px' }}
             >
               En cours ({inProgressOrders.length})
             </button>
@@ -573,51 +547,82 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
         </div>
 
         {filteredOrdersList.length === 0 ? (
-          <div style={{ textStyle: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center' }}>
+          <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '0.88rem', textAlign: 'center' }}>
             Aucune commande dans cette catégorie.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '350px', overflowY: 'auto' }}>
-            {filteredOrdersList.map(ord => (
-              <div
-                key={ord.id}
-                onClick={() => selectOrder(ord.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 14px',
-                  borderRadius: 'var(--radius-sm)',
-                  border: matchedOrder?.id === ord.id ? '2px solid var(--accent-cyan)' : '1px solid var(--border-color)',
-                  background: matchedOrder?.id === ord.id ? 'rgba(2, 132, 199, 0.05)' : 'var(--bg-card)',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontWeight: '800', fontSize: '0.95rem', color: 'var(--text-primary)' }}>{ord.id}</span>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>- {ord.nomCommande}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '400px', overflowY: 'auto' }}>
+            {filteredOrdersList.map(ord => {
+              const totalQty = (ord.articles || []).reduce((acc, a) => acc + (parseInt(a.quantity) || 1), 0);
+              
+              return (
+                <div
+                  key={ord.id}
+                  onClick={() => selectOrder(ord.id)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justify: 'space-between',
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: matchedOrder?.id === ord.id ? '2px solid var(--accent-cyan)' : '1px solid var(--border-color)',
+                    background: matchedOrder?.id === ord.id ? 'rgba(2, 132, 199, 0.05)' : 'var(--bg-card)',
+                    cursor: 'pointer',
+                    gap: '10px',
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: '160px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontWeight: '800', fontSize: '0.95rem', color: 'var(--text-primary)' }}>{ord.id}</span>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: '600' }}>{ord.nomCommande}</span>
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Client: <strong>{ord.client}</strong> • {ord.articles?.length || 0} art. ({totalQty} pce)
+                    </div>
                   </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Client : {ord.client} • {ord.articles?.length || 0} article(s)
-                  </div>
-                </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {ord.status === 'en_attente' && (
-                    <span className="badge badge-amber" style={{ fontSize: '0.7rem' }}>En attente</span>
-                  )}
-                  {ord.status === 'en_cours' && (
-                    <span className="badge badge-cyan" style={{ fontSize: '0.7rem' }}>En cours</span>
-                  )}
-                  {ord.status === 'fini' && (
-                    <span className="badge badge-emerald" style={{ fontSize: '0.7rem' }}>Fini</span>
-                  )}
-                  <ChevronRight size={18} style={{ color: 'var(--text-muted)' }} />
+                  {/* DIRECT INLINE ACTIONS: LANCÉ / FINI */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+                    {ord.status === 'en_attente' && (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => {
+                          updateOrderStatus(ord.id, 'en_cours');
+                          refreshOrders();
+                          playScanBeep('launch');
+                          confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } });
+                        }}
+                        style={{ padding: '6px 12px', fontSize: '0.82rem', fontWeight: '800' }}
+                      >
+                        🚀 LANCÉ
+                      </button>
+                    )}
+
+                    {ord.status === 'en_cours' && (
+                      <button
+                        className="btn btn-emerald btn-sm"
+                        onClick={() => {
+                          updateOrderStatus(ord.id, 'fini');
+                          refreshOrders();
+                          playScanBeep('success');
+                          confetti({ particleCount: 80, spread: 80, origin: { y: 0.6 } });
+                        }}
+                        style={{ padding: '6px 12px', fontSize: '0.82rem', fontWeight: '800' }}
+                      >
+                        ✅ FINI
+                      </button>
+                    )}
+
+                    {ord.status === 'fini' && (
+                      <span className="badge badge-emerald" style={{ fontSize: '0.75rem', padding: '4px 8px' }}>
+                        ✓ FINI
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
