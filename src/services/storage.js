@@ -1,4 +1,4 @@
-// Data Service & LocalStorage Manager for SuiviPRO (With Supabase Cloud Realtime Sync)
+// Data Service & LocalStorage Manager for SuiviPRO (With Supabase Cloud Realtime Sync & Anti-Zombie Deletion)
 import {
   fetchCloudOrders,
   saveCloudOrder,
@@ -9,6 +9,7 @@ import {
 
 const STORAGE_KEY = 'suivie_orders_v2';
 const GAMMES_STORAGE_KEY = 'suivie_custom_gammes_v1';
+const DELETED_IDS_KEY = 'suivie_deleted_order_ids_v1';
 
 // In-memory fallback if LocalStorage quota is strictly locked by browser
 let inMemoryOrdersStore = null;
@@ -56,6 +57,27 @@ export const DEFAULT_COLORIS = [
   'RAL 8019 Brun Gris',
   'RAL 7035 Gris Clair'
 ];
+
+// Get deleted order IDs to prevent ghost restoration
+export function getDeletedOrderIds() {
+  try {
+    const data = localStorage.getItem(DELETED_IDS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function recordDeletedOrderId(orderId) {
+  if (!orderId) return;
+  try {
+    const list = getDeletedOrderIds();
+    if (!list.includes(orderId)) {
+      list.push(orderId);
+      localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(list));
+    }
+  } catch (e) {}
+}
 
 // Clean obsolete storage keys to free browser space
 export function cleanupStorageQuota() {
@@ -111,11 +133,26 @@ export function saveStoredGamme(newGamme) {
 // Synchronize orders with Supabase Cloud
 export async function syncOrdersWithCloud(onSyncCompleted) {
   try {
-    const cloudOrders = await fetchCloudOrders();
-    const localOrders = getOrders();
+    const deletedIds = getDeletedOrderIds();
+    const rawCloudOrders = await fetchCloudOrders();
+    const rawLocalOrders = getOrders();
+
+    // Filter out deleted IDs from both sources
+    const localOrders = (rawLocalOrders || []).filter(o => o && o.id && !deletedIds.includes(o.id));
+    
+    let cloudOrders = [];
+    if (rawCloudOrders && Array.isArray(rawCloudOrders)) {
+      // If any deleted order is still in cloud, purge it from cloud
+      rawCloudOrders.forEach(c => {
+        if (c && c.id && deletedIds.includes(c.id)) {
+          deleteCloudOrder(c.id);
+        } else if (c && c.id) {
+          cloudOrders.push(c);
+        }
+      });
+    }
 
     if (cloudOrders && Array.isArray(cloudOrders)) {
-      // Merge cloud and local orders (Cloud takes priority if newer timestamp)
       const orderMap = new Map();
       
       // Load local first
@@ -138,15 +175,11 @@ export async function syncOrdersWithCloud(onSyncCompleted) {
         }
       });
 
-      const merged = Array.from(orderMap.values());
-      // Sort by creation date descending
+      const merged = Array.from(orderMap.values()).filter(o => o && o.id && !deletedIds.includes(o.id));
       merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
       saveOrdersLocally(merged);
       
-      // Async push merged list back to cloud to keep both sides identical
-      saveAllCloudOrders(merged);
-
       if (onSyncCompleted) onSyncCompleted(merged);
       return merged;
     }
@@ -158,36 +191,39 @@ export async function syncOrdersWithCloud(onSyncCompleted) {
 
 // Internal Local Storage Saver
 function saveOrdersLocally(orders) {
-  const cleanOrders = orders.map(ord => ({
-    id: ord.id,
-    orderCategory: ord.orderCategory || 'menuiserie',
-    nomCommande: ord.nomCommande || '',
-    client: ord.client || '',
-    notes: ord.notes || '',
-    status: ord.status || 'en_attente',
-    createdAt: ord.createdAt,
-    launchedAt: ord.launchedAt,
-    completedAt: ord.completedAt,
-    durationMinutes: ord.durationMinutes,
-    updatedAt: ord.updatedAt || new Date().toISOString(),
-    articles: (ord.articles || []).map(a => ({
-      id: a.id,
-      designation: a.designation || '',
-      typeMenuiserie: a.typeMenuiserie,
-      quantity: a.quantity || 1,
-      hauteur: a.hauteur || 1000,
-      largeur: a.largeur || 1000,
-      gamme: a.gamme || 'h36 2p',
-      avecCaisson: Boolean(a.avecCaisson),
-      caissonHauteur: a.caissonHauteur,
-      avecFixe: Boolean(a.avecFixe),
-      fixeDetails: a.fixeDetails,
-      typeLame: a.typeLame,
-      typeCaisson: a.typeCaisson,
-      typeManoeuvre: a.typeManoeuvre,
-      coloris: a.coloris
-    }))
-  }));
+  const deletedIds = getDeletedOrderIds();
+  const cleanOrders = orders
+    .filter(ord => ord && ord.id && !deletedIds.includes(ord.id))
+    .map(ord => ({
+      id: ord.id,
+      orderCategory: ord.orderCategory || 'menuiserie',
+      nomCommande: ord.nomCommande || '',
+      client: ord.client || '',
+      notes: ord.notes || '',
+      status: ord.status || 'en_attente',
+      createdAt: ord.createdAt,
+      launchedAt: ord.launchedAt,
+      completedAt: ord.completedAt,
+      durationMinutes: ord.durationMinutes,
+      updatedAt: ord.updatedAt || new Date().toISOString(),
+      articles: (ord.articles || []).map(a => ({
+        id: a.id,
+        designation: a.designation || '',
+        typeMenuiserie: a.typeMenuiserie,
+        quantity: a.quantity || 1,
+        hauteur: a.hauteur || 1000,
+        largeur: a.largeur || 1000,
+        gamme: a.gamme || 'h36 2p',
+        avecCaisson: Boolean(a.avecCaisson),
+        caissonHauteur: a.caissonHauteur,
+        avecFixe: Boolean(a.avecFixe),
+        fixeDetails: a.fixeDetails,
+        typeLame: a.typeLame,
+        typeCaisson: a.typeCaisson,
+        typeManoeuvre: a.typeManoeuvre,
+        coloris: a.coloris
+      }))
+    }));
 
   inMemoryOrdersStore = cleanOrders;
 
@@ -205,24 +241,29 @@ function saveOrdersLocally(orders) {
 
 // Initialize & load stored orders
 export function getOrders() {
+  const deletedIds = getDeletedOrderIds();
+  let list = [];
+
   if (inMemoryOrdersStore !== null) {
-    return inMemoryOrdersStore;
-  }
-  try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (!data) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    list = inMemoryOrdersStore;
+  } else {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (!data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+        inMemoryOrdersStore = [];
+        return [];
+      }
+      list = JSON.parse(data);
+      inMemoryOrdersStore = list;
+    } catch (e) {
+      console.error('Failed to parse orders from localStorage', e);
       inMemoryOrdersStore = [];
       return [];
     }
-    const parsed = JSON.parse(data);
-    inMemoryOrdersStore = parsed;
-    return parsed;
-  } catch (e) {
-    console.error('Failed to parse orders from localStorage', e);
-    inMemoryOrdersStore = [];
-    return [];
   }
+
+  return list.filter(o => o && o.id && !deletedIds.includes(o.id));
 }
 
 // Save orders locally + push to cloud
@@ -330,14 +371,26 @@ export function updateOrderStatus(orderId, newStatus) {
 }
 
 export function deleteOrder(orderId) {
+  if (!orderId) return getOrders();
+  
+  recordDeletedOrderId(orderId);
   const orders = getOrders();
   const updated = orders.filter(o => o.id !== orderId);
+  
   saveOrdersLocally(updated);
   deleteCloudOrder(orderId);
   return updated;
 }
 
 export function clearAllOrders() {
+  const current = getOrders();
+  current.forEach(o => {
+    if (o && o.id) {
+      recordDeletedOrderId(o.id);
+      deleteCloudOrder(o.id);
+    }
+  });
+  
   inMemoryOrdersStore = [];
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
