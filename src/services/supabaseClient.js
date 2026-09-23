@@ -20,13 +20,15 @@ export async function fetchCloudOrders() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      // Fallback: If table 'suivie_orders' doesn't exist yet, check generic storage 'app_state'
       console.warn("Table 'suivie_orders' error, checking fallback storage...", error.message);
-      return await fetchAppStateFallback();
+      const fallbackData = await fetchAppStateFallback();
+      if (fallbackData) return fallbackData;
+      return null;
     }
 
     isOnline = true;
     if (data && Array.isArray(data)) {
+      console.log(`☁️ Supabase Cloud: ${data.length} commande(s) récupérée(s).`);
       return data.map(row => ({
         ...row.data,
         id: row.id || row.data?.id,
@@ -38,7 +40,7 @@ export async function fetchCloudOrders() {
   } catch (err) {
     console.error("Cloud fetch error:", err);
     isOnline = false;
-    return null; // Return null so storage service can fallback to LocalStorage
+    return null;
   }
 }
 
@@ -55,14 +57,16 @@ export async function saveCloudOrder(order) {
       updated_at: new Date().toISOString()
     };
 
+    console.log(`☁️ Envoi de la commande ${order.id} vers Supabase...`);
     const { error } = await supabase
       .from('suivie_orders')
       .upsert(rowPayload, { onConflict: 'id' });
 
     if (error) {
-      console.warn("Upsert to 'suivie_orders' failed, using fallback app_state...", error.message);
+      console.warn("⚠️ Upsert 'suivie_orders' échec (Vérifiez RLS dans Supabase):", error.message);
       await saveAppStateFallback(order);
     } else {
+      console.log(`✅ Commande ${order.id} sauvegardée sur Supabase !`);
       isOnline = true;
     }
   } catch (e) {
@@ -92,6 +96,7 @@ export async function saveAllCloudOrders(orders) {
       console.warn("Bulk upsert fallback to app_state...", error.message);
       await saveAllAppStateFallback(orders);
     } else {
+      console.log(`☁️ Supabase Cloud: Sync global de ${orders.length} commande(s) effectuée avec succès.`);
       isOnline = true;
     }
   } catch (e) {

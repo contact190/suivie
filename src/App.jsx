@@ -8,7 +8,7 @@ import QRScannerModal from './components/QRScannerModal';
 import FicheAtelierModal from './components/FicheAtelierModal';
 import MobileAtelierView from './components/MobileAtelierView';
 import { getOrders, syncOrdersWithCloud, subscribeCloudOrdersRealtime } from './services/storage';
-import { getCloudOnlineStatus } from './services/supabaseClient';
+import { getCloudOnlineStatus, saveAllCloudOrders } from './services/supabaseClient';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('list'); // 'create' | 'list' | 'dashboard' | 'mobile-atelier'
@@ -27,14 +27,21 @@ export default function App() {
     setOrders(data);
   };
 
+  const forceCloudSync = async () => {
+    const local = getOrders();
+    // Push local orders to cloud first in case local has new orders
+    await saveAllCloudOrders(local);
+    // Then pull merged list from cloud
+    const fresh = await syncOrdersWithCloud();
+    setOrders(fresh);
+    setIsCloudConnected(getCloudOnlineStatus());
+  };
+
   useEffect(() => {
     loadOrders();
 
-    // Trigger initial cloud sync with Supabase
-    syncOrdersWithCloud((freshOrders) => {
-      setOrders(freshOrders);
-      setIsCloudConnected(getCloudOnlineStatus());
-    });
+    // Trigger initial cloud sync with Supabase and push local orders if any
+    forceCloudSync();
 
     // Subscribe to real-time WebSockets events on Supabase
     const unsubscribe = subscribeCloudOrdersRealtime(() => {
