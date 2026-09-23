@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.1",
     "canvas-confetti": "^1.9.4",
     "chart.js": "^4.5.1",
     "html5-qrcode": "^2.3.8",

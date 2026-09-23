@@ -437,19 +437,27 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
         </div>
 
         {/* Dynamic Articles Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <h3 style={{ fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {orderCategory === 'volet' ? <Disc style={{ color: 'var(--accent-purple)' }} /> : <Layers style={{ color: 'var(--accent-cyan)' }} />}
-            {orderCategory === 'volet' ? `Volets Roulants (${articles.length})` : `Articles Menuiserie (${articles.length})`}
-          </h3>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={handleAddArticle}
-          >
-            <Plus size={16} /> Ajouter un {orderCategory === 'volet' ? 'volet' : 'article'}
-          </button>
-        </div>
+        {(() => {
+          const totalFormPieces = articles.reduce((sum, a) => sum + (parseInt(a.quantity) || 1), 0);
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+              <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {orderCategory === 'volet' ? <Disc style={{ color: 'var(--accent-purple)' }} /> : <Layers style={{ color: 'var(--accent-cyan)' }} />}
+                {orderCategory === 'volet'
+                  ? `Volets Roulants (${articles.length} ligne(s) • Total : ${totalFormPieces} pièce(s))`
+                  : `Articles Menuiserie (${articles.length} ligne(s) • Total : ${totalFormPieces} pièce(s))`
+                }
+              </h3>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleAddArticle}
+              >
+                <Plus size={16} /> Ajouter un {orderCategory === 'volet' ? 'volet' : 'article'}
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Articles List */}
         {articles.map((article, idx) => (

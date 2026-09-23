@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PlusCircle, ListFilter, QrCode, LayoutDashboard, Factory, Edit3, Smartphone, X, ExternalLink, Copy, Check } from 'lucide-react';
+import { PlusCircle, ListFilter, QrCode, LayoutDashboard, Factory, Edit3, Smartphone, X, ExternalLink, Copy, Check, Cloud, CloudOff } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import OrderForm from './components/OrderForm';
 import OrderList from './components/OrderList';
@@ -7,7 +7,8 @@ import Dashboard from './components/Dashboard';
 import QRScannerModal from './components/QRScannerModal';
 import FicheAtelierModal from './components/FicheAtelierModal';
 import MobileAtelierView from './components/MobileAtelierView';
-import { getOrders } from './services/storage';
+import { getOrders, syncOrdersWithCloud, subscribeCloudOrdersRealtime } from './services/storage';
+import { getCloudOnlineStatus } from './services/supabaseClient';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('list'); // 'create' | 'list' | 'dashboard' | 'mobile-atelier'
@@ -18,8 +19,9 @@ export default function App() {
   const [editingOrder, setEditingOrder] = useState(null);
   const [selectedOrderForPrint, setSelectedOrderForPrint] = useState(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [isCloudConnected, setIsCloudConnected] = useState(true);
 
-  // Load orders on mount & check URL params for mobile mode
+  // Load orders on mount & trigger Supabase Cloud sync & realtime subscription
   const loadOrders = () => {
     const data = getOrders();
     setOrders(data);
@@ -28,11 +30,29 @@ export default function App() {
   useEffect(() => {
     loadOrders();
 
+    // Trigger initial cloud sync with Supabase
+    syncOrdersWithCloud((freshOrders) => {
+      setOrders(freshOrders);
+      setIsCloudConnected(getCloudOnlineStatus());
+    });
+
+    // Subscribe to real-time WebSockets events on Supabase
+    const unsubscribe = subscribeCloudOrdersRealtime(() => {
+      syncOrdersWithCloud((freshOrders) => {
+        setOrders(freshOrders);
+        setIsCloudConnected(getCloudOnlineStatus());
+      });
+    });
+
     // Auto open mobile atelier view if URL contains ?mode=mobile or #mobile
     const searchParams = new URLSearchParams(window.location.search);
     if (searchParams.get('mode') === 'mobile' || window.location.hash === '#mobile') {
       setActiveTab('mobile-atelier');
     }
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const handleOrderCreatedOrUpdated = () => {
@@ -129,7 +149,7 @@ export default function App() {
           gap: '16px'
         }}>
           
-          {/* Brand Logo & Title */}
+          {/* Brand Logo & Title & Cloud Indicator */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }} onClick={() => setActiveTab('list')}>
             <div style={{
               background: 'var(--gradient-brand)',
@@ -143,8 +163,19 @@ export default function App() {
               <Factory size={24} style={{ color: '#fff' }} />
             </div>
             <div>
-              <h1 style={{ fontSize: '1.4rem', lineHeight: '1.1' }}>SuiviPRO <span style={{ color: 'var(--accent-cyan)', fontSize: '0.85rem', fontWeight: 'normal' }}>v1.3</span></h1>
-              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Production & QR Code Atelier</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h1 style={{ fontSize: '1.4rem', lineHeight: '1.1' }}>SuiviPRO <span style={{ color: 'var(--accent-cyan)', fontSize: '0.85rem', fontWeight: 'normal' }}>v1.4</span></h1>
+                {isCloudConnected ? (
+                  <span className="badge badge-emerald" style={{ fontSize: '0.68rem', padding: '2px 8px', textTransform: 'none' }} title="Synchronisé avec la base Supabase Cloud en temps réel">
+                    <Cloud size={11} /> Supabase Realtime
+                  </span>
+                ) : (
+                  <span className="badge badge-amber" style={{ fontSize: '0.68rem', padding: '2px 8px', textTransform: 'none' }} title="Mode local uniquement">
+                    <CloudOff size={11} /> Mode Hors Ligne
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Production & QR Code Atelier Cloud</span>
             </div>
           </div>
 

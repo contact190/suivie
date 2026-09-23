@@ -1,4 +1,11 @@
-// Data Service & LocalStorage Manager for SuiviPRO (Light Mode & Quota Resilient Edition)
+// Data Service & LocalStorage Manager for SuiviPRO (With Supabase Cloud Realtime Sync)
+import {
+  fetchCloudOrders,
+  saveCloudOrder,
+  saveAllCloudOrders,
+  deleteCloudOrder,
+  subscribeCloudOrdersRealtime
+} from './supabaseClient';
 
 const STORAGE_KEY = 'suivie_orders_v2';
 const GAMMES_STORAGE_KEY = 'suivie_custom_gammes_v1';
@@ -56,7 +63,6 @@ export function cleanupStorageQuota() {
     const keysToRemove = ['suivie_orders_v1', 'suivie_orders_v0', 'suivie_demo_v1', 'loglevel'];
     keysToRemove.forEach(k => localStorage.removeItem(k));
 
-    // Also remove any random large temp keys
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && (key.startsWith('temp_') || key.includes('cache_'))) {
@@ -102,6 +108,101 @@ export function saveStoredGamme(newGamme) {
   return getStoredGammes();
 }
 
+// Synchronize orders with Supabase Cloud
+export async function syncOrdersWithCloud(onSyncCompleted) {
+  try {
+    const cloudOrders = await fetchCloudOrders();
+    const localOrders = getOrders();
+
+    if (cloudOrders && Array.isArray(cloudOrders)) {
+      // Merge cloud and local orders (Cloud takes priority if newer timestamp)
+      const orderMap = new Map();
+      
+      // Load local first
+      localOrders.forEach(o => {
+        if (o && o.id) orderMap.set(o.id, o);
+      });
+
+      // Override with cloud
+      cloudOrders.forEach(c => {
+        if (!c || !c.id) return;
+        const local = orderMap.get(c.id);
+        if (!local) {
+          orderMap.set(c.id, c);
+        } else {
+          const localTime = new Date(local.updatedAt || local.createdAt || 0).getTime();
+          const cloudTime = new Date(c.updatedAt || c.createdAt || 0).getTime();
+          if (cloudTime >= localTime) {
+            orderMap.set(c.id, c);
+          }
+        }
+      });
+
+      const merged = Array.from(orderMap.values());
+      // Sort by creation date descending
+      merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+      saveOrdersLocally(merged);
+      
+      // Async push merged list back to cloud to keep both sides identical
+      saveAllCloudOrders(merged);
+
+      if (onSyncCompleted) onSyncCompleted(merged);
+      return merged;
+    }
+  } catch (e) {
+    console.warn("Cloud sync warning:", e);
+  }
+  return getOrders();
+}
+
+// Internal Local Storage Saver
+function saveOrdersLocally(orders) {
+  const cleanOrders = orders.map(ord => ({
+    id: ord.id,
+    orderCategory: ord.orderCategory || 'menuiserie',
+    nomCommande: ord.nomCommande || '',
+    client: ord.client || '',
+    notes: ord.notes || '',
+    status: ord.status || 'en_attente',
+    createdAt: ord.createdAt,
+    launchedAt: ord.launchedAt,
+    completedAt: ord.completedAt,
+    durationMinutes: ord.durationMinutes,
+    updatedAt: ord.updatedAt || new Date().toISOString(),
+    articles: (ord.articles || []).map(a => ({
+      id: a.id,
+      designation: a.designation || '',
+      typeMenuiserie: a.typeMenuiserie,
+      quantity: a.quantity || 1,
+      hauteur: a.hauteur || 1000,
+      largeur: a.largeur || 1000,
+      gamme: a.gamme || 'h36 2p',
+      avecCaisson: Boolean(a.avecCaisson),
+      caissonHauteur: a.caissonHauteur,
+      avecFixe: Boolean(a.avecFixe),
+      fixeDetails: a.fixeDetails,
+      typeLame: a.typeLame,
+      typeCaisson: a.typeCaisson,
+      typeManoeuvre: a.typeManoeuvre,
+      coloris: a.coloris
+    }))
+  }));
+
+  inMemoryOrdersStore = cleanOrders;
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanOrders));
+  } catch (err) {
+    cleanupStorageQuota();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanOrders));
+    } catch (err2) {
+      console.error('Critical quota error. Operating in memory fallback:', err2);
+    }
+  }
+}
+
 // Initialize & load stored orders
 export function getOrders() {
   if (inMemoryOrdersStore !== null) {
@@ -124,67 +225,10 @@ export function getOrders() {
   }
 }
 
-// Safe saveOrders with QuotaExceeded Error Handling & Pruning
+// Save orders locally + push to cloud
 export function saveOrders(orders) {
-  // Sanitize orders to store only lightweight JSON fields
-  const cleanOrders = orders.map(ord => ({
-    id: ord.id,
-    orderCategory: ord.orderCategory || 'menuiserie',
-    nomCommande: ord.nomCommande || '',
-    client: ord.client || '',
-    notes: ord.notes || '',
-    status: ord.status || 'en_attente',
-    createdAt: ord.createdAt,
-    launchedAt: ord.launchedAt,
-    completedAt: ord.completedAt,
-    durationMinutes: ord.durationMinutes,
-    updatedAt: ord.updatedAt,
-    articles: (ord.articles || []).map(a => ({
-      id: a.id,
-      designation: a.designation || '',
-      typeMenuiserie: a.typeMenuiserie,
-      quantity: a.quantity || 1,
-      hauteur: a.hauteur || 1000,
-      largeur: a.largeur || 1000,
-      gamme: a.gamme || 'h36 2p',
-      avecCaisson: Boolean(a.avecCaisson),
-      caissonHauteur: a.caissonHauteur,
-      avecFixe: Boolean(a.avecFixe),
-      fixeDetails: a.fixeDetails,
-      typeLame: a.typeLame,
-      typeCaisson: a.typeCaisson,
-      typeManoeuvre: a.typeManoeuvre,
-      coloris: a.coloris
-    }))
-  }));
-
-  // Always update in-memory store
-  inMemoryOrdersStore = cleanOrders;
-
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanOrders));
-  } catch (err) {
-    console.warn('QuotaExceededError encountered! Triggering automatic quota cleanup...', err);
-    cleanupStorageQuota();
-
-    try {
-      // Try again after cleanup
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanOrders));
-    } catch (err2) {
-      console.warn('Still exceeding quota. Pruning oldest finished orders...', err2);
-      // Keep all en_attente and en_cours, and keep up to 20 most recent finished orders
-      const pending = cleanOrders.filter(o => o.status !== 'fini');
-      const finished = cleanOrders.filter(o => o.status === 'fini').slice(0, 20);
-      const pruned = [...pending, ...finished];
-      
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
-        inMemoryOrdersStore = pruned;
-      } catch (err3) {
-        console.error('Critical quota error. Operating in memory fallback:', err3);
-      }
-    }
-  }
+  saveOrdersLocally(orders);
+  saveAllCloudOrders(orders);
 }
 
 export function addOrder(orderData) {
@@ -196,9 +240,11 @@ export function addOrder(orderData) {
     orderCategory: orderData.orderCategory || 'menuiserie',
     status: 'en_attente',
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
   const updated = [newOrder, ...orders];
-  saveOrders(updated);
+  saveOrdersLocally(updated);
+  saveCloudOrder(newOrder);
   return newOrder;
 }
 
@@ -206,35 +252,42 @@ export function updateOrder(updatedOrderData) {
   const orders = getOrders();
   const targetId = String(updatedOrderData.id || '').trim().toUpperCase();
   let found = false;
+  let modifiedOrder = null;
 
   const updated = orders.map(ord => {
     const currentId = String(ord.id || '').trim().toUpperCase();
     if (currentId === targetId) {
       found = true;
-      return {
+      modifiedOrder = {
         ...ord,
         ...updatedOrderData,
         status: ord.status || 'en_attente',
         updatedAt: new Date().toISOString()
       };
+      return modifiedOrder;
     }
     return ord;
   });
 
   if (!found) {
-    updated.unshift({
+    modifiedOrder = {
       ...updatedOrderData,
       status: 'en_attente',
+      createdAt: updatedOrderData.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
-    });
+    };
+    updated.unshift(modifiedOrder);
   }
 
-  saveOrders(updated);
+  saveOrdersLocally(updated);
+  saveCloudOrder(modifiedOrder);
   return updated;
 }
 
 export function updateOrderStatus(orderId, newStatus) {
   const orders = getOrders();
+  let modifiedOrder = null;
+
   const updated = orders.map(ord => {
     if (ord.id === orderId) {
       const now = new Date().toISOString();
@@ -256,25 +309,31 @@ export function updateOrderStatus(orderId, newStatus) {
         durationMinutes = undefined;
       }
 
-      return {
+      modifiedOrder = {
         ...ord,
         status: newStatus,
         launchedAt,
         completedAt,
-        durationMinutes
+        durationMinutes,
+        updatedAt: now
       };
+      return modifiedOrder;
     }
     return ord;
   });
 
-  saveOrders(updated);
+  saveOrdersLocally(updated);
+  if (modifiedOrder) {
+    saveCloudOrder(modifiedOrder);
+  }
   return updated;
 }
 
 export function deleteOrder(orderId) {
   const orders = getOrders();
   const updated = orders.filter(o => o.id !== orderId);
-  saveOrders(updated);
+  saveOrdersLocally(updated);
+  deleteCloudOrder(orderId);
   return updated;
 }
 
@@ -296,3 +355,5 @@ export function formatDuration(minutes) {
   const remMinutes = minutes % 60;
   return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
 }
+
+export { subscribeCloudOrdersRealtime };
