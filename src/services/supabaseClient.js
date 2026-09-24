@@ -29,12 +29,18 @@ export async function fetchCloudOrders() {
     isOnline = true;
     if (data && Array.isArray(data)) {
       console.log(`☁️ Supabase Cloud: ${data.length} commande(s) récupérée(s).`);
-      return data.map(row => ({
-        ...row.data,
-        id: row.id || row.data?.id,
-        status: row.status || row.data?.status || 'en_attente',
-        updatedAt: row.updated_at || row.data?.updatedAt
-      }));
+      return data.map(row => {
+        let orderObj = row.data;
+        if (typeof orderObj === 'string') {
+          try { orderObj = JSON.parse(orderObj); } catch (e) { orderObj = {}; }
+        }
+        return {
+          ...(orderObj || {}),
+          id: row.id || orderObj?.id,
+          status: row.status || orderObj?.status || 'en_attente',
+          updatedAt: row.updated_at || orderObj?.updatedAt
+        };
+      });
     }
     return [];
   } catch (err) {

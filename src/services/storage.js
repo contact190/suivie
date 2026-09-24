@@ -126,6 +126,16 @@ export function recordDeletedOrderId(orderId) {
   } catch (e) {}
 }
 
+export function removeDeletedOrderId(orderId) {
+  if (!orderId) return;
+  const normId = String(orderId).trim().toUpperCase();
+  try {
+    const list = getDeletedOrderIds();
+    const updated = list.filter(id => id !== normId);
+    localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(updated));
+  } catch (e) {}
+}
+
 // Clean obsolete storage keys to free browser space
 export function cleanupStorageQuota() {
   try {
@@ -242,8 +252,11 @@ export async function syncOrdersWithCloud(onSyncCompleted) {
 // Internal Local Storage Saver
 function saveOrdersLocally(orders) {
   const deletedIds = getDeletedOrderIds();
+  const activeIds = new Set(orders.map(o => o && String(o.id || '').trim().toUpperCase()));
+  const filteredDeletedIds = deletedIds.filter(id => !activeIds.has(id));
+
   const cleanOrders = orders
-    .filter(ord => ord && ord.id && !deletedIds.includes(String(ord.id).trim().toUpperCase()))
+    .filter(ord => ord && ord.id && !filteredDeletedIds.includes(String(ord.id).trim().toUpperCase()))
     .map(ord => ({
       id: ord.id,
       orderCategory: ord.orderCategory || 'menuiserie',
@@ -329,23 +342,49 @@ export function saveOrders(orders) {
 export function addOrder(orderData) {
   const orders = getOrders();
   const prefix = orderData.orderCategory === 'volet' ? 'VLT' : 'CMD';
+  const year = new Date().getFullYear();
+  
+  const deletedIds = getDeletedOrderIds();
+  const allIds = [...orders.map(o => o.id), ...deletedIds];
+  let maxNum = 0;
+
+  allIds.forEach(idStr => {
+    if (!idStr) return;
+    const match = String(idStr).match(/(?:CMD|VLT)-\d+-(\d+)/i) || String(idStr).match(/-(\d+)$/);
+    if (match && match[1]) {
+      const n = parseInt(match[1], 10);
+      if (!isNaN(n) && n > maxNum) {
+        maxNum = n;
+      }
+    }
+  });
+
+  const nextNum = Math.max(orders.length + 1, maxNum + 1);
+  const generatedId = `${prefix}-${year}-${String(nextNum).padStart(3, '0')}`;
+  const finalId = orderData.id || generatedId;
+
+  removeDeletedOrderId(finalId);
+
   const newOrder = {
     ...orderData,
-    id: orderData.id || `${prefix}-${new Date().getFullYear()}-${String(orders.length + 1).padStart(3, '0')}`,
+    id: finalId,
     orderCategory: orderData.orderCategory || 'menuiserie',
     status: 'en_attente',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  const updated = [newOrder, ...orders];
+
+  const updated = [newOrder, ...orders.filter(o => String(o.id || '').trim().toUpperCase() !== String(finalId).trim().toUpperCase())];
   saveOrdersLocally(updated);
   saveCloudOrder(newOrder);
   return newOrder;
 }
 
 export function updateOrder(updatedOrderData) {
-  const orders = getOrders();
   const targetId = String(updatedOrderData.id || '').trim().toUpperCase();
+  removeDeletedOrderId(targetId);
+
+  const orders = getOrders();
   let found = false;
   let modifiedOrder = null;
 
