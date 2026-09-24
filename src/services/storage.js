@@ -58,6 +58,51 @@ export const DEFAULT_COLORIS = [
   'RAL 7035 Gris Clair'
 ];
 
+// Predefined Height & Width Ranges for Menuiserie Articles
+export const HEIGHT_WIDTH_RANGES = [
+  '< 1000 mm (< 1m)',
+  '1000 - 1500 mm',
+  '1500 - 2000 mm',
+  '2000 - 2500 mm',
+  '2500 - 3000 mm',
+  '3000 - 3500 mm',
+  '3500 - 4000 mm',
+  '> 4000 mm'
+];
+
+export function getDimensionRange(val) {
+  if (!val) return '1000 - 1500 mm';
+  const strVal = String(val).trim();
+  if (HEIGHT_WIDTH_RANGES.includes(strVal)) return strVal;
+  
+  const num = parseInt(strVal, 10);
+  if (isNaN(num)) return '1000 - 1500 mm';
+  if (num < 1000) return '< 1000 mm (< 1m)';
+  if (num < 1500) return '1000 - 1500 mm';
+  if (num < 2000) return '1500 - 2000 mm';
+  if (num < 2500) return '2000 - 2500 mm';
+  if (num < 3000) return '2500 - 3000 mm';
+  if (num < 3500) return '3000 - 3500 mm';
+  if (num < 4000) return '3500 - 4000 mm';
+  return '> 4000 mm';
+}
+
+export function parseRangeToMidpoint(val) {
+  if (typeof val === 'number') return val;
+  const s = String(val || '');
+  if (s.includes('< 1000')) return 800;
+  if (s.includes('1000 - 1500')) return 1250;
+  if (s.includes('1500 - 2000')) return 1750;
+  if (s.includes('2000 - 2500')) return 2250;
+  if (s.includes('2500 - 3000')) return 2750;
+  if (s.includes('3000 - 3500')) return 3250;
+  if (s.includes('3500 - 4000')) return 3750;
+  if (s.includes('> 4000')) return 4250;
+  const num = parseInt(s, 10);
+  return isNaN(num) ? 1250 : num;
+}
+
+
 // Get deleted order IDs to prevent ghost restoration
 export function getDeletedOrderIds() {
   try {

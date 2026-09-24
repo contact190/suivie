@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Copy, Save, Layers, Box, Maximize2, AlertCircle, Sparkles, Disc, Search, Check, Edit3, X } from 'lucide-react';
-import { addOrder, updateOrder, getStoredGammes, saveStoredGamme, DEFAULT_TYPES_LAME, DEFAULT_TYPES_CAISSON, DEFAULT_TYPES_MANOEUVRE, DEFAULT_COLORIS } from '../services/storage';
+import {
+  addOrder,
+  updateOrder,
+  getStoredGammes,
+  saveStoredGamme,
+  DEFAULT_TYPES_LAME,
+  DEFAULT_TYPES_CAISSON,
+  DEFAULT_TYPES_MANOEUVRE,
+  DEFAULT_COLORIS,
+  HEIGHT_WIDTH_RANGES,
+  getDimensionRange
+} from '../services/storage';
 
 // Searchable & Creatable Gamme Combobox Component
 function GammeCombobox({ value, onChange }) {
@@ -144,15 +155,16 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
       typeMenuiserie: 'Coulissant',
       designation: 'Coulissant Standard',
       quantity: 1,
-      hauteur: 1450,
-      largeur: 1200,
+      hauteur: '1000 - 1500 mm',
+      largeur: '1000 - 1500 mm',
       gamme: gammes[0] || 'h36 2p',
       avecCaisson: false,
       caissonHauteur: 200,
       avecFixe: false,
       fixeDetails: {
+        direction: 'horizontal', // 'horizontal' | 'vertical'
         hauteur: 400,
-        largeur: 1200,
+        largeur: 400,
         gamme: gammes[0] || 'h36 2p'
       }
     };
@@ -182,14 +194,26 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
       setNotes(editingOrder.notes || '');
 
       if (editingOrder.articles && editingOrder.articles.length > 0) {
+        const isVolet = editingOrder.orderCategory === 'volet';
         const sanitized = editingOrder.articles.map(art => ({
           ...art,
           gamme: art.gamme || 'h36 2p',
           designation: art.designation || art.typeMenuiserie || 'Article',
           typeMenuiserie: art.typeMenuiserie || 'Coulissant',
           quantity: art.quantity || 1,
-          hauteur: art.hauteur || 1000,
-          largeur: art.largeur || 1000,
+          hauteur: isVolet ? (art.hauteur || 1400) : getDimensionRange(art.hauteur),
+          largeur: isVolet ? (art.largeur || 1200) : getDimensionRange(art.largeur),
+          fixeDetails: art.fixeDetails ? {
+            direction: art.fixeDetails.direction || 'horizontal',
+            hauteur: art.fixeDetails.hauteur || 400,
+            largeur: art.fixeDetails.largeur || 400,
+            gamme: art.fixeDetails.gamme || art.gamme || 'h36 2p'
+          } : {
+            direction: 'horizontal',
+            hauteur: 400,
+            largeur: 400,
+            gamme: art.gamme || 'h36 2p'
+          },
           typeLame: art.typeLame || DEFAULT_TYPES_LAME[0],
           typeCaisson: art.typeCaisson || DEFAULT_TYPES_CAISSON[0],
           typeManoeuvre: art.typeManoeuvre || DEFAULT_TYPES_MANOEUVRE[0],
@@ -252,7 +276,12 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
 
   const handleFixeChange = (index, field, value) => {
     const newArticles = [...articles];
-    const currentFixe = newArticles[index].fixeDetails || { hauteur: 400, largeur: newArticles[index].largeur, gamme: newArticles[index].gamme };
+    const currentFixe = newArticles[index].fixeDetails || {
+      direction: 'horizontal',
+      hauteur: 400,
+      largeur: 400,
+      gamme: newArticles[index].gamme
+    };
     newArticles[index].fixeDetails = {
       ...currentFixe,
       [field]: value
@@ -278,11 +307,16 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
     // Validate articles safely
     for (let i = 0; i < articles.length; i++) {
       const art = articles[i];
-      if (!art.hauteur || art.hauteur <= 0 || !art.largeur || art.largeur <= 0) {
-        setErrorMsg(`Article #${i + 1} : La hauteur et la largeur doivent être supérieures à 0.`);
-        return;
-      }
-      if (orderCategory === 'menuiserie') {
+      if (orderCategory === 'volet') {
+        if (!art.hauteur || art.hauteur <= 0 || !art.largeur || art.largeur <= 0) {
+          setErrorMsg(`Article #${i + 1} : La hauteur et la largeur doivent être supérieures à 0.`);
+          return;
+        }
+      } else {
+        if (!art.hauteur || !art.largeur) {
+          setErrorMsg(`Article #${i + 1} : Veuillez choisir une tranche de hauteur et de largeur.`);
+          return;
+        }
         const gammeVal = String(art.gamme || '').trim();
         if (!gammeVal) {
           setErrorMsg(`Article #${i + 1} : Veuillez renseigner ou sélectionner une Gamme.`);
@@ -536,32 +570,36 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
                   </div>
                 </div>
 
-                {/* Dimensions */}
+                {/* Dimensions (Liste de Tranches) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '8px' }}>
                   <div className="form-group">
-                    <label className="form-label">Hauteur (mm)</label>
-                    <input
-                      type="number"
-                      min="100"
-                      className="form-input"
-                      placeholder="1450"
-                      value={article.hauteur || ''}
-                      onChange={(e) => handleArticleChange(idx, 'hauteur', parseInt(e.target.value) || 0)}
+                    <label className="form-label">Tranche de Hauteur *</label>
+                    <select
+                      className="form-select"
+                      style={{ fontWeight: '600' }}
+                      value={getDimensionRange(article.hauteur)}
+                      onChange={(e) => handleArticleChange(idx, 'hauteur', e.target.value)}
                       required
-                    />
+                    >
+                      {HEIGHT_WIDTH_RANGES.map(range => (
+                        <option key={range} value={range}>{range}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Largeur (mm)</label>
-                    <input
-                      type="number"
-                      min="100"
-                      className="form-input"
-                      placeholder="1200"
-                      value={article.largeur || ''}
-                      onChange={(e) => handleArticleChange(idx, 'largeur', parseInt(e.target.value) || 0)}
+                    <label className="form-label">Tranche de Largeur *</label>
+                    <select
+                      className="form-select"
+                      style={{ fontWeight: '600' }}
+                      value={getDimensionRange(article.largeur)}
+                      onChange={(e) => handleArticleChange(idx, 'largeur', e.target.value)}
                       required
-                    />
+                    >
+                      {HEIGHT_WIDTH_RANGES.map(range => (
+                        <option key={range} value={range}>{range}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
@@ -595,6 +633,7 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
                     )}
                   </div>
 
+                  {/* Fixe options with HORIZONTAL vs VERTICAL direction */}
                   <div style={{ background: 'var(--bg-secondary)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
                     <div
                       className="toggle-group"
@@ -603,35 +642,62 @@ export default function OrderForm({ onOrderCreated, editingOrder, onCancelEdit }
                     >
                       <span style={{ fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
                         <Maximize2 size={18} style={{ color: 'var(--accent-cyan)' }} />
-                        Avec Fixe (Imposte / Allège)
+                        Avec Fixe (Imposte / Allège / Lateral)
                       </span>
                       <div className={`toggle-switch ${article.avecFixe ? 'active' : ''}`} />
                     </div>
 
                     {article.avecFixe && (
-                      <div className="animate-fade-in" style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed var(--border-color)', display: 'grid', gap: '10px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          <div>
-                            <label className="form-label">Hauteur Fixe (mm)</label>
+                      <div className="animate-fade-in" style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed var(--border-color)', display: 'grid', gap: '12px' }}>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.84rem', fontWeight: 'bold' }}>Direction du Fixe *</label>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                            <button
+                              type="button"
+                              className={`btn btn-sm ${(article.fixeDetails?.direction || 'horizontal') === 'horizontal' ? 'btn-primary' : 'btn-secondary'}`}
+                              onClick={() => handleFixeChange(idx, 'direction', 'horizontal')}
+                              style={{ padding: '8px', fontSize: '0.86rem', justifyContent: 'center' }}
+                            >
+                              ↔️ Horizontal
+                            </button>
+                            <button
+                              type="button"
+                              className={`btn btn-sm ${article.fixeDetails?.direction === 'vertical' ? 'btn-primary' : 'btn-secondary'}`}
+                              onClick={() => handleFixeChange(idx, 'direction', 'vertical')}
+                              style={{ padding: '8px', fontSize: '0.86rem', justifyContent: 'center' }}
+                            >
+                              ↕️ Vertical
+                            </button>
+                          </div>
+                        </div>
+
+                        {(article.fixeDetails?.direction || 'horizontal') === 'horizontal' ? (
+                          <div className="form-group" style={{ marginBottom: 0 }}>
+                            <label className="form-label">Hauteur du Fixe (mm) *</label>
                             <input
                               type="number"
                               min="50"
                               className="form-input"
+                              placeholder="ex: 400"
                               value={article.fixeDetails?.hauteur || 400}
                               onChange={(e) => handleFixeChange(idx, 'hauteur', parseInt(e.target.value) || 0)}
                             />
+                            <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Le fixe horizontal s'étend sur toute la largeur.</span>
                           </div>
-                          <div>
-                            <label className="form-label">Largeur Fixe (mm)</label>
+                        ) : (
+                          <div className="form-group" style={{ marginBottom: 0 }}>
+                            <label className="form-label">Largeur du Fixe (mm) *</label>
                             <input
                               type="number"
                               min="50"
                               className="form-input"
-                              value={article.fixeDetails?.largeur || article.largeur}
+                              placeholder="ex: 400"
+                              value={article.fixeDetails?.largeur || 400}
                               onChange={(e) => handleFixeChange(idx, 'largeur', parseInt(e.target.value) || 0)}
                             />
+                            <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Le fixe vertical s'étend sur toute la hauteur.</span>
                           </div>
-                        </div>
+                        )}
                       </div>
                     )}
                   </div>

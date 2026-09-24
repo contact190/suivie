@@ -784,9 +784,13 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
                       <span style={{ color: 'var(--accent-purple)' }}>{art.gamme}</span>
                     </div>
                     <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '3px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                      <span>📐 {art.hauteur} x {art.largeur} mm</span>
+                      <span>📐 H: {art.hauteur} | L: {art.largeur}</span>
                       {art.avecCaisson && <span style={{ color: 'var(--accent-amber)', fontWeight: 'bold' }}>[Caisson]</span>}
-                      {art.avecFixe && <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>[Fixe]</span>}
+                      {art.avecFixe && (
+                        <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>
+                          [Fixe {art.fixeDetails?.direction === 'vertical' ? `Vert. (${art.fixeDetails?.largeur || 400}mm)` : `Horiz. (${art.fixeDetails?.hauteur || 400}mm)`}]
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}

@@ -505,7 +505,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                               </td>
                               <td style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 'bold' }}>{art.quantity}</td>
                               <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: 'bold', color: isVolet ? 'var(--accent-purple)' : 'var(--accent-cyan)' }}>
-                                {art.largeur} x {art.hauteur} mm
+                                {isVolet ? `${art.largeur} x ${art.hauteur} mm` : `H: ${art.hauteur} | L: ${art.largeur}`}
                               </td>
 
                               {isVolet ? (
@@ -525,7 +525,9 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                                   </td>
                                   <td style={{ padding: '8px 12px' }}>
                                     {art.avecFixe && art.fixeDetails ? (
-                                      <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>Oui ({art.fixeDetails.hauteur} x {art.fixeDetails.largeur}mm)</span>
+                                      <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>
+                                        Oui ({art.fixeDetails.direction === 'vertical' ? `Vertical L:${art.fixeDetails.largeur || 400}mm` : `Horizontal H:${art.fixeDetails.hauteur || 400}mm`})
+                                      </span>
                                     ) : (
                                       <span style={{ color: 'var(--text-muted)' }}>Non</span>
                                     )}

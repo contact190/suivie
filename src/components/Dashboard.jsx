@@ -31,7 +31,12 @@ import {
   AlertCircle,
   PackageCheck
 } from 'lucide-react';
-import { formatDuration } from '../services/storage';
+import {
+  formatDuration,
+  HEIGHT_WIDTH_RANGES,
+  getDimensionRange,
+  parseRangeToMidpoint
+} from '../services/storage';
 
 ChartJS.register(
   CategoryScale,
@@ -72,7 +77,9 @@ export default function Dashboard({ orders }) {
       const dur = getOrderDuration(o);
       totalFinishedMinutes += dur;
       (o.articles || []).forEach(art => {
-        const sqM = ((art.hauteur || 1000) / 1000) * ((art.largeur || 1000) / 1000) * (art.quantity || 1);
+        const hMm = parseRangeToMidpoint(art.hauteur);
+        const wMm = parseRangeToMidpoint(art.largeur);
+        const sqM = (hMm / 1000) * (wMm / 1000) * (art.quantity || 1);
         totalFinishedSqM += sqM;
       });
     });
@@ -156,31 +163,51 @@ export default function Dashboard({ orders }) {
     const avgWithoutFixe = timeWithoutFixe.count > 0 ? Math.round(timeWithoutFixe.total / timeWithoutFixe.count) : 0;
     const extraMinutesFixe = avgWithFixe > avgWithoutFixe ? avgWithFixe - avgWithoutFixe : 0;
 
-    // 5. Tranches de Taille
-    const bracketStats = {
-      'Petites (< 1.4m)': { totalTime: 0, count: 0 },
-      'Moyennes (1.4m - 2.0m)': { totalTime: 0, count: 0 },
-      'Grandes (> 2.0m)': { totalTime: 0, count: 0 }
-    };
+    // 5. Tranches de Hauteur & Tranches de Largeur (Analyse sur les 8 tranches prédéfinies)
+    const heightRangeStats = {};
+    const widthRangeStats = {};
 
-    finies.forEach(o => {
+    HEIGHT_WIDTH_RANGES.forEach(r => {
+      heightRangeStats[r] = { totalTime: 0, count: 0, articlesCount: 0 };
+      widthRangeStats[r] = { totalTime: 0, count: 0, articlesCount: 0 };
+    });
+
+    orders.forEach(o => {
       const dur = getOrderDuration(o);
-      if (!dur) return;
+      const isFinished = o.status === 'fini';
       (o.articles || []).forEach(art => {
-        const maxDim = Math.max(art.hauteur || 1000, art.largeur || 1000);
-        let key = 'Petites (< 1.4m)';
-        if (maxDim > 2000) key = 'Grandes (> 2.0m)';
-        else if (maxDim >= 1400) key = 'Moyennes (1.4m - 2.0m)';
+        const hRange = getDimensionRange(art.hauteur);
+        const wRange = getDimensionRange(art.largeur);
+        const qty = parseInt(art.quantity) || 1;
 
-        bracketStats[key].totalTime += dur;
-        bracketStats[key].count += 1;
+        if (heightRangeStats[hRange]) {
+          heightRangeStats[hRange].articlesCount += qty;
+          if (isFinished && dur) {
+            heightRangeStats[hRange].totalTime += dur;
+            heightRangeStats[hRange].count += 1;
+          }
+        }
+        if (widthRangeStats[wRange]) {
+          widthRangeStats[wRange].articlesCount += qty;
+          if (isFinished && dur) {
+            widthRangeStats[wRange].totalTime += dur;
+            widthRangeStats[wRange].count += 1;
+          }
+        }
       });
     });
 
-    const bracketLabels = Object.keys(bracketStats);
-    const bracketAvgTimes = bracketLabels.map(k =>
-      bracketStats[k].count > 0 ? Math.round(bracketStats[k].totalTime / bracketStats[k].count) : 0
+    const heightRangeLabels = HEIGHT_WIDTH_RANGES;
+    const heightRangeAvgTimes = heightRangeLabels.map(r =>
+      heightRangeStats[r].count > 0 ? Math.round(heightRangeStats[r].totalTime / heightRangeStats[r].count) : 0
     );
+    const heightRangeCounts = heightRangeLabels.map(r => heightRangeStats[r].articlesCount);
+
+    const widthRangeLabels = HEIGHT_WIDTH_RANGES;
+    const widthRangeAvgTimes = widthRangeLabels.map(r =>
+      widthRangeStats[r].count > 0 ? Math.round(widthRangeStats[r].totalTime / widthRangeStats[r].count) : 0
+    );
+    const widthRangeCounts = widthRangeLabels.map(r => widthRangeStats[r].articlesCount);
 
     // 6. Temps par Gamme
     const gammeStats = {};
@@ -262,10 +289,12 @@ export default function Dashboard({ orders }) {
       extraMinutesCaisson,
       avgWithFixe,
       avgWithoutFixe,
-      extraMinutesFixe,
-      bracketStats,
-      bracketLabels,
-      bracketAvgTimes,
+      heightRangeLabels,
+      heightRangeAvgTimes,
+      heightRangeCounts,
+      widthRangeLabels,
+      widthRangeAvgTimes,
+      widthRangeCounts,
       gammeLabels,
       gammeAvgTimes,
       trackedEnCours,
@@ -297,15 +326,52 @@ export default function Dashboard({ orders }) {
     ]
   };
 
-  // Chart 2: Tranches de Tailles
-  const dimensionChartData = {
-    labels: stats.bracketLabels,
+  // Chart 2: Tranches de Hauteur
+  const heightRangeChartData = {
+    labels: stats.heightRangeLabels,
     datasets: [
       {
-        label: 'Temps Moyen par Taille (Minutes)',
-        data: stats.bracketAvgTimes,
-        backgroundColor: ['#10b981', '#2563eb', '#e11d48'],
-        borderRadius: 8
+        label: 'Nombre d\'Articles',
+        data: stats.heightRangeCounts,
+        backgroundColor: 'rgba(2, 132, 199, 0.75)',
+        borderColor: '#0284c7',
+        borderWidth: 1,
+        borderRadius: 6,
+        yAxisID: 'y'
+      },
+      {
+        label: 'Temps Moyen (Minutes)',
+        data: stats.heightRangeAvgTimes,
+        backgroundColor: 'rgba(16, 185, 129, 0.85)',
+        borderColor: '#10b981',
+        borderWidth: 1,
+        borderRadius: 6,
+        yAxisID: 'y1'
+      }
+    ]
+  };
+
+  // Chart 2b: Tranches de Largeur
+  const widthRangeChartData = {
+    labels: stats.widthRangeLabels,
+    datasets: [
+      {
+        label: 'Nombre d\'Articles',
+        data: stats.widthRangeCounts,
+        backgroundColor: 'rgba(124, 58, 237, 0.75)',
+        borderColor: '#7c3aed',
+        borderWidth: 1,
+        borderRadius: 6,
+        yAxisID: 'y'
+      },
+      {
+        label: 'Temps Moyen (Minutes)',
+        data: stats.widthRangeAvgTimes,
+        backgroundColor: 'rgba(217, 119, 6, 0.85)',
+        borderColor: '#d97706',
+        borderWidth: 1,
+        borderRadius: 6,
+        yAxisID: 'y1'
       }
     ]
   };
@@ -356,6 +422,42 @@ export default function Dashboard({ orders }) {
     scales: {
       x: { ticks: { color: '#64748b' }, grid: { color: '#e2e8f0' } },
       y: { ticks: { color: '#64748b' }, grid: { color: '#e2e8f0' } }
+    }
+  };
+
+  const dualAxisChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: { color: '#475569', font: { family: 'Plus Jakarta Sans', weight: '600' } }
+      },
+      tooltip: {
+        backgroundColor: '#ffffff',
+        titleColor: '#0f172a',
+        bodyColor: '#0284c7',
+        borderColor: '#e2e8f0',
+        borderWidth: 1
+      }
+    },
+    scales: {
+      x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#e2e8f0' } },
+      y: {
+        type: 'linear',
+        display: true,
+        position: 'left',
+        title: { display: true, text: 'Nb Articles', color: '#64748b' },
+        ticks: { color: '#64748b' },
+        grid: { color: '#e2e8f0' }
+      },
+      y1: {
+        type: 'linear',
+        display: true,
+        position: 'right',
+        title: { display: true, text: 'Temps Moyen (min)', color: '#10b981' },
+        ticks: { color: '#10b981' },
+        grid: { drawOnChartArea: false }
+      }
     }
   };
 
@@ -535,17 +637,15 @@ export default function Dashboard({ orders }) {
         </div>
       </div>
 
-      {/* 📌 SECTION 2: 📐 ANALYSE PAR DIMENSIONS & TRANCHES DE TAILLE */}
+      {/* 📌 SECTION 2: 📐 ANALYSE PAR TRANCHES DE HAUTEUR ET LARGEUR */}
       <div style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', borderBottom: '2px solid var(--border-color)', paddingBottom: '8px' }}>
           <Ruler style={{ color: 'var(--accent-emerald)' }} />
-          📐 2. Analyse par Dimensions & Tranches de Taille
+          📐 2. Analyse par Tranches de Hauteur & Largeur (&lt; 1m à &gt; 4000mm)
         </h3>
 
-        {/* 4 KPI CARDS FOR SECTION 2 */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '20px' }}>
-          
-          {/* Ratio Min / m² */}
+        {/* Ratio Min / m² KPI Card */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '20px' }}>
           <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid var(--accent-emerald)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>RATIO MINUTES / M²</span>
@@ -555,63 +655,36 @@ export default function Dashboard({ orders }) {
               {stats.minutesPerSqM} min/m²
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Temps nécessaire pour fabriquer 1 m²
+              Temps moyen de fabrication pour 1 m² de menuiserie
             </div>
           </div>
-
-          {/* Petites (<1.4m) */}
-          <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid #10b981' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
-              <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>PETITES (&lt; 1.4m)</span>
-              <Ruler size={18} style={{ color: '#10b981' }} />
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: '800', marginTop: '6px', color: '#10b981' }}>
-              {formatDuration(stats.bracketAvgTimes[0])}
-            </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Assemblage rapide en atelier
-            </div>
-          </div>
-
-          {/* Moyennes (1.4m - 2.0m) */}
-          <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid #2563eb' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
-              <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>MOYENNES (1.4m - 2.0m)</span>
-              <Ruler size={18} style={{ color: '#2563eb' }} />
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: '800', marginTop: '6px', color: '#2563eb' }}>
-              {formatDuration(stats.bracketAvgTimes[1])}
-            </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Taille standard atelier
-            </div>
-          </div>
-
-          {/* Grandes (>2.0m) */}
-          <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid #e11d48' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
-              <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>GRANDES (&gt; 2.0m)</span>
-              <Ruler size={18} style={{ color: '#e11d48' }} />
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: '800', marginTop: '6px', color: '#e11d48' }}>
-              {formatDuration(stats.bracketAvgTimes[2])}
-            </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Nécessite 2 opérateurs / manutention
-            </div>
-          </div>
-
         </div>
 
-        {/* CHART FOR SECTION 2 */}
-        <div className="glass-card" style={{ padding: '20px' }}>
-          <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Ruler size={16} style={{ color: 'var(--accent-blue)' }} />
-            Temps Moyen par Tranche de Taille (Petite / Moyenne / Grande)
-          </h4>
-          <div style={{ height: '240px' }}>
-            <Bar data={dimensionChartData} options={chartOptionsLight} />
+        {/* 2 CHARTS: TRANCHES DE HAUTEUR ET TRANCHES DE LARGEUR */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '20px' }}>
+          
+          {/* Chart Tranches de Hauteur */}
+          <div className="glass-card" style={{ padding: '20px' }}>
+            <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Ruler size={16} style={{ color: 'var(--accent-cyan)' }} />
+              Répartition & Temps Moyen par Tranche de Hauteur
+            </h4>
+            <div style={{ height: '260px' }}>
+              <Bar data={heightRangeChartData} options={dualAxisChartOptions} />
+            </div>
           </div>
+
+          {/* Chart Tranches de Largeur */}
+          <div className="glass-card" style={{ padding: '20px' }}>
+            <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Ruler size={16} style={{ color: 'var(--accent-purple)' }} />
+              Répartition & Temps Moyen par Tranche de Largeur
+            </h4>
+            <div style={{ height: '260px' }}>
+              <Bar data={widthRangeChartData} options={dualAxisChartOptions} />
+            </div>
+          </div>
+
         </div>
       </div>
 
