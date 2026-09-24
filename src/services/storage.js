@@ -599,6 +599,33 @@ export function createSubOrder(parentOrderId, selectedArticlesOrIds, subOrderNot
   return newSubOrder;
 }
 
+export function duplicateOrder(sourceOrderId) {
+  const orders = getOrders();
+  const sourceNormId = String(sourceOrderId || '').trim().toUpperCase();
+  const sourceOrder = orders.find(o => String(o.id || '').trim().toUpperCase() === sourceNormId);
+  if (!sourceOrder) return null;
+
+  const isVolet = sourceOrder.orderCategory === 'volet';
+  const artPrefix = isVolet ? 'vlt' : 'art';
+
+  const duplicatedArticles = (sourceOrder.articles || []).map((art, idx) => ({
+    ...art,
+    id: `${artPrefix}-${Date.now()}-${idx + 1}-${Math.random().toString(36).substr(2, 4)}`,
+    isFinished: false,
+    subOrderTransferred: undefined
+  }));
+
+  const orderData = {
+    orderCategory: sourceOrder.orderCategory || 'menuiserie',
+    nomCommande: sourceOrder.nomCommande ? `${sourceOrder.nomCommande}` : 'Commande dupliquée',
+    client: sourceOrder.client || '',
+    notes: sourceOrder.notes || '',
+    articles: duplicatedArticles
+  };
+
+  return addOrder(orderData);
+}
+
 export function toggleArticleFinished(orderId, articleId) {
   const orders = getOrders();
   let modifiedOrder = null;

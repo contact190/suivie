@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Search, PlayCircle, CheckCircle, Clock, QrCode, Trash2, Filter, Edit3, Disc, Layers, HardDrive, Sparkles, ChevronDown, ChevronRight, ChevronsUpDown, GitBranch, PlusCircle } from 'lucide-react';
-import { updateOrderStatus, deleteOrder, formatDuration, cleanupStorageQuota, toggleArticleFinished } from '../services/storage';
+import { Search, PlayCircle, CheckCircle, Clock, QrCode, Trash2, Filter, Edit3, Disc, Layers, HardDrive, Sparkles, ChevronDown, ChevronRight, ChevronsUpDown, GitBranch, PlusCircle, Copy } from 'lucide-react';
+import { updateOrderStatus, deleteOrder, formatDuration, cleanupStorageQuota, toggleArticleFinished, duplicateOrder } from '../services/storage';
 import CreateSubOrderModal from './CreateSubOrderModal';
 
 export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrder, onPrintOrder }) {
@@ -11,6 +11,16 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
   const [expandedOrders, setExpandedOrders] = useState({});
   const [subOrderTargetOrder, setSubOrderTargetOrder] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
+
+  const handleDuplicateOrder = (orderId, e) => {
+    if (e) e.stopPropagation();
+    const newOrder = duplicateOrder(orderId);
+    if (newOrder) {
+      setToastMsg(`📋 Commande ${orderId} dupliquée avec succès ➔ Nouvelle commande : ${newOrder.id} (En attente)`);
+      setTimeout(() => setToastMsg(''), 4500);
+      onRefresh();
+    }
+  };
 
   const toggleExpand = (orderId, e) => {
     if (e) e.stopPropagation();
@@ -387,6 +397,15 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                       title="Ouvrir le scanner"
                     >
                       <PlayCircle size={14} /> Scan
+                    </button>
+
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={(e) => handleDuplicateOrder(order.id, e)}
+                      style={{ color: 'var(--accent-cyan)', borderColor: 'rgba(2,132,199,0.3)' }}
+                      title="Dupliquer cette commande (nouvel ID le plus récent, état en attente)"
+                    >
+                      <Copy size={14} /> Dupliquer
                     </button>
 
                     {isPending && (
