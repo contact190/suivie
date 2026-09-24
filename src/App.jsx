@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { PlusCircle, ListFilter, QrCode, LayoutDashboard, Factory, Edit3, Smartphone, X, ExternalLink, Copy, Check, Cloud, CloudOff } from 'lucide-react';
+import { PlusCircle, ListFilter, QrCode, LayoutDashboard, Factory, Edit3, Smartphone, X, ExternalLink, Copy, Check, Cloud, CloudOff, Target } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import OrderForm from './components/OrderForm';
 import OrderList from './components/OrderList';
 import Dashboard from './components/Dashboard';
+import GammeTargetsPage from './components/GammeTargetsPage';
 import QRScannerModal from './components/QRScannerModal';
 import FicheAtelierModal from './components/FicheAtelierModal';
 import MobileAtelierView from './components/MobileAtelierView';
@@ -239,6 +240,18 @@ export default function App() {
             </button>
 
             <button
+              className={`btn ${activeTab === 'targets' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveTab('targets')}
+              style={{
+                borderColor: activeTab === 'targets' ? 'transparent' : 'var(--accent-purple)',
+                color: activeTab === 'targets' ? '#fff' : 'var(--accent-purple)',
+                fontWeight: '700'
+              }}
+            >
+              <Target size={18} /> Gammes & Objectifs
+            </button>
+
+            <button
               className={`btn ${activeTab === 'dashboard' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setActiveTab('dashboard')}
             >
@@ -252,6 +265,10 @@ export default function App() {
       <main style={{ flex: 1, padding: '30px 20px' }}>
         {activeTab === 'mobile-atelier' && (
           <MobileAtelierView onOrdersUpdated={loadOrders} />
+        )}
+
+        {activeTab === 'targets' && (
+          <GammeTargetsPage />
         )}
 
         {activeTab === 'create' && (

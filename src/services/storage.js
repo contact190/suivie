@@ -561,11 +561,210 @@ export function toggleArticleFinished(orderId, articleId) {
 
 // Utility: Format duration in readable French text
 export function formatDuration(minutes) {
-  if (!minutes || isNaN(minutes)) return 'N/A';
+  if (minutes === undefined || minutes === null || isNaN(minutes)) return 'N/A';
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
   const remMinutes = minutes % 60;
   return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
 }
 
+// 🎯 OBJECTIFS & GAMMES STORAGE & INTELLIGENT CALCULATOR
+const TARGETS_GAMME_KEY = 'suivie_gamme_target_times_v1';
+const TARGETS_DAILY_SIZE_KEY = 'suivie_daily_size_targets_v1';
+
+export const DEFAULT_GAMME_TARGETS = {
+  'h36 2p': { targetTimeMinutes: 45, targetCoulissantMinutes: 50, targetOuvrantMinutes: 40 },
+  'h31 2p': { targetTimeMinutes: 40, targetCoulissantMinutes: 45, targetOuvrantMinutes: 35 },
+  'h40 1v': { targetTimeMinutes: 30, targetCoulissantMinutes: 35, targetOuvrantMinutes: 25 },
+  'h40 vasistas': { targetTimeMinutes: 25, targetCoulissantMinutes: 30, targetOuvrantMinutes: 20 }
+};
+
+export const DEFAULT_DAILY_SIZE_TARGETS = {
+  '< 1000 mm (< 1m)': { coulissantDailyTarget: 20, ouvrantDailyTarget: 25 },
+  '1000 - 1500 mm': { coulissantDailyTarget: 15, ouvrantDailyTarget: 18 },
+  '1500 - 2000 mm': { coulissantDailyTarget: 12, ouvrantDailyTarget: 15 },
+  '2000 - 2500 mm': { coulissantDailyTarget: 10, ouvrantDailyTarget: 12 },
+  '2500 - 3000 mm': { coulissantDailyTarget: 8, ouvrantDailyTarget: 10 },
+  '3000 - 3500 mm': { coulissantDailyTarget: 6, ouvrantDailyTarget: 8 },
+  '3500 - 4000 mm': { coulissantDailyTarget: 4, ouvrantDailyTarget: 6 },
+  '> 4000 mm': { coulissantDailyTarget: 3, ouvrantDailyTarget: 4 }
+};
+
+export function getGammeTargets() {
+  try {
+    const data = localStorage.getItem(TARGETS_GAMME_KEY);
+    if (!data) return DEFAULT_GAMME_TARGETS;
+    const parsed = JSON.parse(data);
+    return { ...DEFAULT_GAMME_TARGETS, ...parsed };
+  } catch (e) {
+    return DEFAULT_GAMME_TARGETS;
+  }
+}
+
+export function saveGammeTargets(targets) {
+  try {
+    localStorage.setItem(TARGETS_GAMME_KEY, JSON.stringify(targets));
+  } catch (e) {
+    console.error('Failed to save gamme targets:', e);
+  }
+}
+
+export function getDailySizeTargets() {
+  try {
+    const data = localStorage.getItem(TARGETS_DAILY_SIZE_KEY);
+    if (!data) return DEFAULT_DAILY_SIZE_TARGETS;
+    const parsed = JSON.parse(data);
+    return { ...DEFAULT_DAILY_SIZE_TARGETS, ...parsed };
+  } catch (e) {
+    return DEFAULT_DAILY_SIZE_TARGETS;
+  }
+}
+
+export function saveDailySizeTargets(targets) {
+  try {
+    localStorage.setItem(TARGETS_DAILY_SIZE_KEY, JSON.stringify(targets));
+  } catch (e) {
+    console.error('Failed to save daily size targets:', e);
+  }
+}
+
+/**
+ * Calculates intelligent target manufacturing duration (in minutes) for an order
+ * based on its articles' Gamme, Type (Coulissant vs Ouvrant), Size Range, and Options.
+ */
+export function calculateOrderSmartTarget(order, customGammeTargets = null) {
+  const gammeTargets = customGammeTargets || getGammeTargets();
+  const articles = order.articles || [];
+
+  if (articles.length === 0) {
+    return {
+      targetMinutes: 30,
+      elapsedMinutes: 0,
+      varianceMinutes: 0,
+      articlesBreakdown: [],
+      statusEvaluation: {
+        code: 'en_attente',
+        label: '⚪ En attente',
+        badgeClass: 'badge-secondary',
+        varianceMinutes: 0,
+        elapsedMinutes: 0
+      }
+    };
+  }
+
+  let totalTargetMinutes = 0;
+  const articlesBreakdown = articles.map(art => {
+    const gammeKey = art.gamme || 'h36 2p';
+    const gammeConfig = gammeTargets[gammeKey] || {
+      targetTimeMinutes: 45,
+      targetCoulissantMinutes: 50,
+      targetOuvrantMinutes: 40
+    };
+
+    const typeStr = (art.typeMenuiserie || art.designation || '').toLowerCase();
+    const isCoulissant = typeStr.includes('coulissant');
+    
+    // Base target time for type
+    let itemBaseTarget = isCoulissant
+      ? (gammeConfig.targetCoulissantMinutes || gammeConfig.targetTimeMinutes || 45)
+      : (gammeConfig.targetOuvrantMinutes || gammeConfig.targetTimeMinutes || 40);
+
+    // Size multiplier
+    const hMm = parseRangeToMidpoint(art.hauteur);
+    const wMm = parseRangeToMidpoint(art.largeur);
+    const maxDim = Math.max(hMm, wMm);
+
+    let sizeFactor = 1.0;
+    if (maxDim < 1000) sizeFactor = 0.85;
+    else if (maxDim <= 1500) sizeFactor = 1.0;
+    else if (maxDim <= 2000) sizeFactor = 1.15;
+    else if (maxDim <= 2500) sizeFactor = 1.30;
+    else if (maxDim <= 3000) sizeFactor = 1.45;
+    else sizeFactor = 1.65;
+
+    let itemTarget = itemBaseTarget * sizeFactor;
+
+    // Options adjustments
+    if (art.avecCaisson) itemTarget += 15;
+    if (art.avecFixe) itemTarget += 10;
+
+    const qty = parseInt(art.quantity) || 1;
+    const finalItemTarget = Math.round(itemTarget * qty);
+    totalTargetMinutes += finalItemTarget;
+
+    return {
+      id: art.id,
+      designation: art.designation || `Article (${gammeKey})`,
+      gamme: gammeKey,
+      type: isCoulissant ? 'Coulissant' : 'Ouvrant',
+      itemTarget: finalItemTarget,
+      quantity: qty
+    };
+  });
+
+  totalTargetMinutes = Math.max(15, totalTargetMinutes);
+
+  // Compute elapsed or actual duration
+  let elapsedMinutes = 0;
+  if (order.status === 'fini') {
+    if (order.durationMinutes) elapsedMinutes = order.durationMinutes;
+    else if (order.launchedAt && order.completedAt) {
+      elapsedMinutes = Math.max(1, Math.round((new Date(order.completedAt).getTime() - new Date(order.launchedAt).getTime()) / (1000 * 60)));
+    }
+  } else if (order.status === 'en_cours' && order.launchedAt) {
+    elapsedMinutes = Math.max(1, Math.round((Date.now() - new Date(order.launchedAt).getTime()) / (1000 * 60)));
+  }
+
+  const varianceMinutes = elapsedMinutes - totalTargetMinutes;
+
+  let code = 'dans_les_temps';
+  let label = '🟢 Dans les temps';
+  let badgeClass = 'badge-emerald';
+
+  if (order.status === 'en_cours') {
+    const ratio = elapsedMinutes / totalTargetMinutes;
+    if (ratio > 1.0) {
+      code = 'en_retard';
+      label = `🔴 Retard (+${varianceMinutes} min)`;
+      badgeClass = 'badge-rose';
+    } else if (ratio >= 0.85) {
+      code = 'a_surveiller';
+      label = `🟡 À surveiller (${Math.round(ratio * 100)}%)`;
+      badgeClass = 'badge-amber';
+    } else {
+      code = 'dans_les_temps';
+      label = `🟢 Dans les temps (${Math.round(ratio * 100)}%)`;
+      badgeClass = 'badge-emerald';
+    }
+  } else if (order.status === 'fini') {
+    if (varianceMinutes > 5) {
+      code = 'depassement';
+      label = `🔴 Dépassement (+${varianceMinutes} min)`;
+      badgeClass = 'badge-rose';
+    } else {
+      code = 'objectif_atteint';
+      label = `🟢 Objectif atteint (-${Math.abs(varianceMinutes)} min)`;
+      badgeClass = 'badge-emerald';
+    }
+  } else {
+    label = `⚪ En attente (Est: ${totalTargetMinutes} min)`;
+    badgeClass = 'badge-secondary';
+  }
+
+  return {
+    targetMinutes: totalTargetMinutes,
+    elapsedMinutes,
+    varianceMinutes,
+    articlesBreakdown,
+    statusEvaluation: {
+      code,
+      label,
+      badgeClass,
+      varianceMinutes,
+      elapsedMinutes
+    }
+  };
+}
+
 export { subscribeCloudOrdersRealtime };
+

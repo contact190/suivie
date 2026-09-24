@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -29,13 +29,21 @@ import {
   ShieldAlert,
   GitBranch,
   AlertCircle,
-  PackageCheck
+  PackageCheck,
+  Target,
+  Filter,
+  CheckCircle,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react';
 import {
   formatDuration,
   HEIGHT_WIDTH_RANGES,
   getDimensionRange,
-  parseRangeToMidpoint
+  parseRangeToMidpoint,
+  getGammeTargets,
+  getDailySizeTargets,
+  calculateOrderSmartTarget
 } from '../services/storage';
 
 ChartJS.register(
@@ -51,6 +59,8 @@ ChartJS.register(
 );
 
 export default function Dashboard({ orders }) {
+  const [smartFilter, setSmartFilter] = useState('all'); // 'all' | 'delayed' | 'ontime' | 'encours'
+
   const stats = useMemo(() => {
     const totalOrders = orders.length;
     const enAttente = orders.filter(o => o.status === 'en_attente').length;
@@ -59,6 +69,10 @@ export default function Dashboard({ orders }) {
 
     const totalFinished = finies.length;
     const completionRate = totalOrders > 0 ? Math.round((totalFinished / totalOrders) * 100) : 0;
+
+    // Target Configs
+    const gammeTargetsConfig = getGammeTargets();
+    const dailySizeTargetsConfig = getDailySizeTargets();
 
     // Helper: calculate order duration in minutes
     const getOrderDuration = (o) => {
@@ -163,7 +177,7 @@ export default function Dashboard({ orders }) {
     const avgWithoutFixe = timeWithoutFixe.count > 0 ? Math.round(timeWithoutFixe.total / timeWithoutFixe.count) : 0;
     const extraMinutesFixe = avgWithFixe > avgWithoutFixe ? avgWithFixe - avgWithoutFixe : 0;
 
-    // 5. Tranches de Hauteur & Tranches de Largeur (Analyse sur les 8 tranches prédéfinies)
+    // 5. Tranches de Hauteur & Tranches de Largeur
     const heightRangeStats = {};
     const widthRangeStats = {};
 
@@ -215,7 +229,7 @@ export default function Dashboard({ orders }) {
       const dur = getOrderDuration(o);
       if (!dur) return;
       (o.articles || []).forEach(art => {
-        const g = art.gamme || 'Gamme Standard';
+        const g = art.gamme || 'h36 2p';
         if (!gammeStats[g]) {
           gammeStats[g] = { totalTime: 0, count: 0 };
         }
@@ -224,10 +238,56 @@ export default function Dashboard({ orders }) {
       });
     });
 
-    const gammeLabels = Object.keys(gammeStats);
-    const gammeAvgTimes = gammeLabels.map(g => Math.round(gammeStats[g].totalTime / gammeStats[g].count));
+    const gammeLabels = Array.from(new Set([...Object.keys(gammeTargetsConfig), ...Object.keys(gammeStats)]));
+    const gammeRealAvgTimes = gammeLabels.map(g => gammeStats[g] && gammeStats[g].count > 0 ? Math.round(gammeStats[g].totalTime / gammeStats[g].count) : 0);
+    const gammeTargetAvgTimes = gammeLabels.map(g => (gammeTargetsConfig[g]?.targetTimeMinutes) || 45);
 
-    // 7. Analysis of All In-Progress Orders (Retards / Suivi)
+    // 7. REAL VS TARGET FOR DAILY VOLUME BY SIZE RANGE & TYPE
+    const dailyVolumeVsTarget = {};
+    HEIGHT_WIDTH_RANGES.forEach(range => {
+      const targetConfig = dailySizeTargetsConfig[range] || { coulissantDailyTarget: 10, ouvrantDailyTarget: 12 };
+      
+      let realCoulissant = 0;
+      let realOuvrant = 0;
+
+      orders.forEach(o => {
+        (o.articles || []).forEach(art => {
+          const hRange = getDimensionRange(art.hauteur);
+          const wRange = getDimensionRange(art.largeur);
+          if (hRange === range || wRange === range) {
+            const typeStr = (art.typeMenuiserie || art.designation || '').toLowerCase();
+            const qty = parseInt(art.quantity) || 1;
+            if (typeStr.includes('coulissant')) realCoulissant += qty;
+            else realOuvrant += qty;
+          }
+        });
+      });
+
+      dailyVolumeVsTarget[range] = {
+        realCoulissant,
+        targetCoulissant: targetConfig.coulissantDailyTarget || 0,
+        realOuvrant,
+        targetOuvrant: targetConfig.ouvrantDailyTarget || 0
+      };
+    });
+
+    // 8. SMART CALCULATION FOR EACH ORDER (COMPARAISON RÉEL VS OBJECTIF CALCULÉ SUR-MESURE)
+    const evaluatedOrders = orders.map(o => {
+      const evalResult = calculateOrderSmartTarget(o, gammeTargetsConfig);
+      return {
+        ...o,
+        smartTarget: evalResult.targetMinutes,
+        elapsedMinutes: evalResult.elapsedMinutes,
+        varianceMinutes: evalResult.varianceMinutes,
+        evalResult
+      };
+    });
+
+    const smartDelayedCount = evaluatedOrders.filter(o => o.evalResult.statusEvaluation.code === 'en_retard' || o.evalResult.statusEvaluation.code === 'depassement').length;
+    const smartOnTimeCount = evaluatedOrders.filter(o => o.evalResult.statusEvaluation.code === 'dans_les_temps' || o.evalResult.statusEvaluation.code === 'objectif_atteint').length;
+    const smartWatchCount = evaluatedOrders.filter(o => o.evalResult.statusEvaluation.code === 'a_surveiller').length;
+
+    // 9. Tracked En Cours (Existant)
     const thresholdMinutes = avgDurationGlobal > 0 ? avgDurationGlobal : 45;
     const trackedEnCours = enCoursOrders.map(o => {
       const launchTime = o.launchedAt ? new Date(o.launchedAt).getTime() : Date.now();
@@ -242,14 +302,12 @@ export default function Dashboard({ orders }) {
       };
     });
 
-    // 8. 🆕 SOUS-COMMANDES & NON-FINIS METRICS (Calculs requis par l'utilisateur)
-    // a) Nombre moyen de sous-commandes par commande
+    // 10. SOUS-COMMANDES & NON-FINIS METRICS
     const subOrdersList = orders.filter(o => o.isSubOrder);
     const totalSubOrders = subOrdersList.length;
     const parentOrdersCount = orders.filter(o => !o.isSubOrder).length;
     const avgSubOrdersPerOrder = parentOrdersCount > 0 ? (totalSubOrders / parentOrdersCount).toFixed(2) : '0.00';
 
-    // b) Nombre moyen des articles non-finis par commande
     let totalUnfinishedArticles = 0;
     let totalUnfinishedQty = 0;
 
@@ -266,11 +324,10 @@ export default function Dashboard({ orders }) {
     const avgUnfinishedArticlesPerOrder = totalOrders > 0 ? (totalUnfinishedArticles / totalOrders).toFixed(2) : '0.00';
     const avgUnfinishedQtyPerOrder = totalOrders > 0 ? (totalUnfinishedQty / totalOrders).toFixed(2) : '0.00';
 
-    // c) Commandes lancées > 24h ago
     const ordersOver24h = enCoursOrders.filter(o => {
       if (!o.launchedAt) return false;
       const elapsedMinutes = (Date.now() - new Date(o.launchedAt).getTime()) / (1000 * 60);
-      return elapsedMinutes >= 24 * 60; // 24 Hours
+      return elapsedMinutes >= 24 * 60;
     });
 
     return {
@@ -296,10 +353,16 @@ export default function Dashboard({ orders }) {
       widthRangeAvgTimes,
       widthRangeCounts,
       gammeLabels,
-      gammeAvgTimes,
+      gammeAvgTimes: gammeRealAvgTimes,
+      gammeRealAvgTimes,
+      gammeTargetAvgTimes,
+      dailyVolumeVsTarget,
+      evaluatedOrders,
+      smartDelayedCount,
+      smartOnTimeCount,
+      smartWatchCount,
       trackedEnCours,
       thresholdMinutes,
-      // New Sub-orders & Unfinished metrics:
       totalSubOrders,
       parentOrdersCount,
       avgSubOrdersPerOrder,
@@ -311,22 +374,84 @@ export default function Dashboard({ orders }) {
     };
   }, [orders]);
 
-  // Chart 1: Coulissant vs Ouvrant
+  // Chart: Réel vs Objectif par Gamme
+  const gammeRealVsTargetChartData = {
+    labels: stats.gammeLabels,
+    datasets: [
+      {
+        label: '⏱️ Temps Réel Moyen (min)',
+        data: stats.gammeRealAvgTimes,
+        backgroundColor: 'rgba(2, 132, 199, 0.85)',
+        borderColor: '#0284c7',
+        borderWidth: 2,
+        borderRadius: 6
+      },
+      {
+        label: '🎯 Objectif Souhaité (min)',
+        data: stats.gammeTargetAvgTimes,
+        backgroundColor: 'rgba(16, 185, 129, 0.85)',
+        borderColor: '#10b981',
+        borderWidth: 2,
+        borderRadius: 6
+      }
+    ]
+  };
+
+  // Chart: Réel vs Objectif Coulissant vs Ouvrant
   const coulissantVsOuvrantChartData = {
     labels: ['⚡ Coulissant', '🚪 Ouvrant'],
     datasets: [
       {
-        label: 'Temps Moyen de Fabrication (Minutes)',
+        label: 'Temps Moyen Réel (Minutes)',
         data: [stats.avgTimeCoulissant, stats.avgTimeOuvrant],
         backgroundColor: ['rgba(2, 132, 199, 0.85)', 'rgba(124, 58, 237, 0.85)'],
         borderColor: ['#0284c7', '#7c3aed'],
+        borderWidth: 2,
+        borderRadius: 8
+      },
+      {
+        label: 'Objectif Cible (Minutes)',
+        data: [50, 40], // Default targets for Coulissant & Ouvrant
+        backgroundColor: ['rgba(148, 163, 184, 0.6)', 'rgba(148, 163, 184, 0.6)'],
+        borderColor: ['#64748b', '#64748b'],
         borderWidth: 2,
         borderRadius: 8
       }
     ]
   };
 
-  // Chart 2: Tranches de Hauteur
+  // Chart: Volume de Production Réel vs Objectif par Tranche
+  const volumeVsTargetChartData = {
+    labels: HEIGHT_WIDTH_RANGES,
+    datasets: [
+      {
+        label: '⚡ Réel Coulissant',
+        data: HEIGHT_WIDTH_RANGES.map(r => stats.dailyVolumeVsTarget[r]?.realCoulissant || 0),
+        backgroundColor: 'rgba(2, 132, 199, 0.85)',
+        borderRadius: 4
+      },
+      {
+        label: '⚡ Objectif Coulissant / jour',
+        data: HEIGHT_WIDTH_RANGES.map(r => stats.dailyVolumeVsTarget[r]?.targetCoulissant || 0),
+        backgroundColor: 'rgba(125, 211, 252, 0.5)',
+        borderRadius: 4
+      },
+      {
+        label: '🚪 Réel Ouvrant',
+        data: HEIGHT_WIDTH_RANGES.map(r => stats.dailyVolumeVsTarget[r]?.realOuvrant || 0),
+        backgroundColor: 'rgba(124, 58, 237, 0.85)',
+        borderRadius: 4
+      },
+      {
+        label: '🚪 Objectif Ouvrant / jour',
+        data: HEIGHT_WIDTH_RANGES.map(r => stats.dailyVolumeVsTarget[r]?.targetOuvrant || 0),
+        backgroundColor: 'rgba(216, 180, 254, 0.5)',
+        borderRadius: 4
+      }
+    ]
+  };
+
+  // Chart: Tranches de Hauteur
   const heightRangeChartData = {
     labels: stats.heightRangeLabels,
     datasets: [
@@ -351,7 +476,7 @@ export default function Dashboard({ orders }) {
     ]
   };
 
-  // Chart 2b: Tranches de Largeur
+  // Chart: Tranches de Largeur
   const widthRangeChartData = {
     labels: stats.widthRangeLabels,
     datasets: [
@@ -376,22 +501,7 @@ export default function Dashboard({ orders }) {
     ]
   };
 
-  // Chart 3: Temps par Gamme
-  const gammeChartData = {
-    labels: stats.gammeLabels.length > 0 ? stats.gammeLabels : ['Aucune gamme enregistrée'],
-    datasets: [
-      {
-        label: 'Temps Moyen par Gamme (Minutes)',
-        data: stats.gammeAvgTimes.length > 0 ? stats.gammeAvgTimes : [0],
-        backgroundColor: 'rgba(5, 150, 105, 0.85)',
-        borderColor: '#059669',
-        borderWidth: 2,
-        borderRadius: 8
-      }
-    ]
-  };
-
-  // Chart 4: Impact Options (Caisson / Fixe)
+  // Chart: Impact Options
   const optionsImpactData = {
     labels: ['Avec Caisson', 'Sans Caisson', 'Avec Fixe', 'Sans Fixe'],
     datasets: [
@@ -461,6 +571,15 @@ export default function Dashboard({ orders }) {
     }
   };
 
+  // Filter smart evaluated orders
+  const filteredSmartOrders = stats.evaluatedOrders.filter(o => {
+    const code = o.evalResult.statusEvaluation.code;
+    if (smartFilter === 'delayed') return code === 'en_retard' || code === 'depassement';
+    if (smartFilter === 'ontime') return code === 'dans_les_temps' || code === 'objectif_atteint';
+    if (smartFilter === 'encours') return o.status === 'en_cours';
+    return true;
+  });
+
   return (
     <div className="animate-fade-in" style={{ maxWidth: '1240px', margin: '0 auto', paddingBottom: '40px' }}>
       
@@ -468,24 +587,219 @@ export default function Dashboard({ orders }) {
       <div style={{ marginBottom: '24px' }}>
         <h2 style={{ fontSize: '1.8rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <TrendingUp style={{ color: 'var(--accent-emerald)' }} />
-          Tableau de Bord Productivité & Analyse de Fabrication
+          Tableau de Bord Productivité & Analyse Réel vs Objectifs
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-          Indicateurs de vitesse par Type, Gamme, Options, Non-Finis et Sous-Commandes (+24h).
+          Comparaison en temps réel entre la fabrication réelle et les objectifs par Gamme, Type, Taille et évaluation intelligente par commande.
         </p>
       </div>
 
-      {/* 📌 SECTION SPECIFIQUE DE CHERCHÉE : 🔄 SOU-COMMANDES ET ARTICLES NON FINIS */}
+      {/* 📌 SECTION NOUTEAU ET CENTRALE: 🎯 COMPARAISON RÉEL VS OBJECTIFS (GAMMES & TYPE & VOLUMES) */}
+      <div style={{ marginBottom: '32px' }}>
+        <h3 style={{ fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', borderBottom: '2px solid var(--border-color)', paddingBottom: '8px' }}>
+          <Target style={{ color: 'var(--accent-cyan)' }} />
+          🎯 Comparaison Réel vs Objectifs (Temps & Volumes par Gamme / Type)
+        </h3>
+
+        {/* 3 HIGHLIGHT CARDS FOR REAL VS TARGET */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+          
+          <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-cyan)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent-cyan)' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>RESPECT DES TEMPS CIBLES</span>
+              <CheckCircle size={22} />
+            </div>
+            <div style={{ fontSize: '2.3rem', fontWeight: '800', marginTop: '6px', color: 'var(--accent-cyan)' }}>
+              {stats.smartOnTimeCount} <span style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>/ {stats.totalOrders} cmd</span>
+            </div>
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              Commandes dans l'objectif de temps calculé sur-mesure
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-amber)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent-amber)' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>À SURVEILLER (&gt;85% CIBLE)</span>
+              <Hourglass size={22} />
+            </div>
+            <div style={{ fontSize: '2.3rem', fontWeight: '800', marginTop: '6px', color: 'var(--accent-amber)' }}>
+              {stats.smartWatchCount} <span style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>cmd en cours</span>
+            </div>
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              Proches de la limite du temps objectif
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-rose)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent-rose)' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>DÉPASSEMENTS / RETARDS</span>
+              <AlertTriangle size={22} />
+            </div>
+            <div style={{ fontSize: '2.3rem', fontWeight: '800', marginTop: '6px', color: 'var(--accent-rose)' }}>
+              {stats.smartDelayedCount} <span style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>cmd</span>
+            </div>
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              Dépassement du temps moyen objectif
+            </div>
+          </div>
+
+        </div>
+
+        {/* 2 COMPARAISON CHARTS: RÉEL VS OBJECTIF PAR GAMME & VOLUME PAR TRANCHE */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '20px' }}>
+          
+          {/* Chart Réel vs Objectif Temps par Gamme */}
+          <div className="glass-card" style={{ padding: '20px' }}>
+            <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Layers size={16} style={{ color: 'var(--accent-cyan)' }} />
+              Temps Moyen Réel vs Objectif Souhaité par Gamme (Minutes)
+            </h4>
+            <div style={{ height: '260px' }}>
+              <Bar data={gammeRealVsTargetChartData} options={chartOptionsLight} />
+            </div>
+          </div>
+
+          {/* Chart Réel vs Objectif Production Volume par Tranche & Type */}
+          <div className="glass-card" style={{ padding: '20px' }}>
+            <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Ruler size={16} style={{ color: 'var(--accent-purple)' }} />
+              Volume de Production Réel vs Objectif Quotidien par Tranche & Type
+            </h4>
+            <div style={{ height: '260px' }}>
+              <Bar data={volumeVsTargetChartData} options={chartOptionsLight} />
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* 📌 SECTION INTELLIGENTE: 🧠 CALCUL INTELLIGENT DU RESPECT DES DÉLAIS PAR COMMANDE */}
+      <div className="glass-card" style={{ padding: '24px', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
+          <h3 style={{ fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', margin: 0 }}>
+            <Zap style={{ color: 'var(--accent-purple)' }} />
+            🧠 Calcul Intelligent par Commande selon Taille, Gamme & Type
+          </h3>
+
+          {/* Filter tabs for orders */}
+          <div style={{ display: 'flex', gap: '6px', background: 'var(--bg-secondary)', padding: '4px', borderRadius: 'var(--radius-sm)' }}>
+            <button
+              className={`btn btn-sm ${smartFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setSmartFilter('all')}
+              style={{ fontSize: '0.78rem' }}
+            >
+              Toutes ({stats.evaluatedOrders.length})
+            </button>
+            <button
+              className={`btn btn-sm ${smartFilter === 'ontime' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setSmartFilter('ontime')}
+              style={{ fontSize: '0.78rem', background: smartFilter === 'ontime' ? '#10b981' : undefined }}
+            >
+              🟢 Dans les temps ({stats.smartOnTimeCount})
+            </button>
+            <button
+              className={`btn btn-sm ${smartFilter === 'delayed' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setSmartFilter('delayed')}
+              style={{ fontSize: '0.78rem', background: smartFilter === 'delayed' ? '#e11d48' : undefined }}
+            >
+              🔴 En retard / Dépassement ({stats.smartDelayedCount})
+            </button>
+            <button
+              className={`btn btn-sm ${smartFilter === 'encours' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setSmartFilter('encours')}
+              style={{ fontSize: '0.78rem' }}
+            >
+              ⚙️ En Cours ({stats.enCoursCount})
+            </button>
+          </div>
+        </div>
+
+        {/* ORDER EVALUATION TABLE */}
+        {filteredSmartOrders.length === 0 ? (
+          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+            Aucune commande ne correspond au filtre sélectionné.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
+                  <th style={{ padding: '10px 14px' }}>Commande & Client</th>
+                  <th style={{ padding: '10px 14px' }}>Articles, Gamme & Type</th>
+                  <th style={{ padding: '10px 14px' }}>🎯 Objectif Sur-Mesure</th>
+                  <th style={{ padding: '10px 14px' }}>⏱️ Temps Réel / Écoulé</th>
+                  <th style={{ padding: '10px 14px' }}>Écart (Variance)</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'center' }}>Évaluation Intelligente</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSmartOrders.map(o => {
+                  const evalRes = o.evalResult;
+                  const statusInfo = evalRes.statusEvaluation;
+                  const isDelayed = statusInfo.code === 'en_retard' || statusInfo.code === 'depassement';
+                  
+                  return (
+                    <tr key={o.id} style={{ borderBottom: '1px solid var(--border-color)', background: isDelayed ? '#fff1f2' : 'transparent' }}>
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ fontWeight: '800', color: 'var(--text-primary)' }}>{o.id}</div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{o.nomCommande}</div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Client: {o.client}</div>
+                      </td>
+                      <td style={{ padding: '12px 14px' }}>
+                        {(o.articles || []).slice(0, 2).map((art, idx) => (
+                          <div key={idx} style={{ fontSize: '0.8rem', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <span className="badge badge-purple" style={{ fontSize: '0.68rem', padding: '1px 5px' }}>{art.gamme || 'Standard'}</span>
+                            <span>{art.typeMenuiserie || art.designation || 'Menuiserie'} ({art.hauteur}×{art.largeur})</span>
+                          </div>
+                        ))}
+                        {(o.articles || []).length > 2 && (
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            +{(o.articles || []).length - 2} autre(s) article(s)
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 14px', fontWeight: '800', color: 'var(--accent-purple)' }}>
+                        {formatDuration(o.smartTarget)}
+                      </td>
+                      <td style={{ padding: '12px 14px', fontWeight: '800', color: isDelayed ? '#e11d48' : 'var(--accent-cyan)' }}>
+                        {o.status === 'en_attente' ? 'Pas encore lancé' : formatDuration(o.elapsedMinutes)}
+                      </td>
+                      <td style={{ padding: '12px 14px', fontWeight: 'bold' }}>
+                        {o.status === 'en_attente' ? (
+                          <span style={{ color: 'var(--text-muted)' }}>--</span>
+                        ) : o.varianceMinutes > 0 ? (
+                          <span style={{ color: '#e11d48', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                            <ArrowUpRight size={14} /> +{o.varianceMinutes} min
+                          </span>
+                        ) : (
+                          <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                            <ArrowDownRight size={14} /> {o.varianceMinutes} min
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                        <span className={`badge ${statusInfo.badgeClass}`} style={{ fontSize: '0.78rem' }}>
+                          {statusInfo.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 📌 SECTION EXISTANTE: 🔄 SOUS-COMMANDES ET ARTICLES NON FINIS */}
       <div style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', borderBottom: '2px solid var(--border-color)', paddingBottom: '8px' }}>
           <GitBranch style={{ color: 'var(--accent-amber)' }} />
           🔄 Suivi des Sous-Commandes & Articles Non Finis
         </h3>
 
-        {/* 3 HIGHLIGHT KPI CARDS FOR USER SPECIFIC REQUEST */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '20px' }}>
           
-          {/* KPI 1: NOMBRE MOYEN DES NON FINI PAR COMMANDE */}
           <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-amber)', background: 'linear-gradient(135deg, #ffffff 0%, #fffbeb 100%)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: '#b45309' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>MOYENNE NON FINIS / CMD</span>
@@ -499,7 +813,6 @@ export default function Dashboard({ orders }) {
             </div>
           </div>
 
-          {/* KPI 2: NOMBRE MOYEN DE SOUS COMMANDES PAR COMMANDE */}
           <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-purple)', background: 'linear-gradient(135deg, #ffffff 0%, #faf5ff 100%)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: '#6b21a8' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>SOUS-COMMANDES / CMD</span>
@@ -513,7 +826,6 @@ export default function Dashboard({ orders }) {
             </div>
           </div>
 
-          {/* KPI 3: COMMANDES LANCÉES > 24H */}
           <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-rose)', background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: '#be123c' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>COMMANDES EN COURS &gt; 24H</span>
@@ -530,17 +842,15 @@ export default function Dashboard({ orders }) {
         </div>
       </div>
 
-      {/* 📌 SECTION 1: ⏱️ TEMPS DE FABRICATION & PRODUCTIVITÉ */}
+      {/* 📌 SECTION EXISTANTE 1: ⏱️ TEMPS DE FABRICATION & PRODUCTIVITÉ */}
       <div style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', borderBottom: '2px solid var(--border-color)', paddingBottom: '8px' }}>
           <Activity style={{ color: 'var(--accent-cyan)' }} />
-          ⏱️ 1. Temps de Fabrication & Productivité
+          ⏱️ Temps de Fabrication & Productivité Globale
         </h3>
 
-        {/* 4 KPI CARDS FOR SECTION 1 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '20px' }}>
           
-          {/* Durée Moyenne Globale */}
           <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid var(--accent-cyan)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>DURÉE MOYENNE GLOBALE</span>
@@ -554,7 +864,6 @@ export default function Dashboard({ orders }) {
             </div>
           </div>
 
-          {/* Queue Time (Temps de réaction) */}
           <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid var(--accent-purple)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>QUEUE TIME (RÉACTION)</span>
@@ -568,7 +877,6 @@ export default function Dashboard({ orders }) {
             </div>
           </div>
 
-          {/* Impact Caisson */}
           <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid var(--accent-amber)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>IMPACT OPTION CAISSON</span>
@@ -582,7 +890,6 @@ export default function Dashboard({ orders }) {
             </div>
           </div>
 
-          {/* Impact Fixe */}
           <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid var(--accent-blue)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: '0.82rem', fontWeight: '800' }}>IMPACT OPTION FIXE</span>
@@ -598,32 +905,18 @@ export default function Dashboard({ orders }) {
 
         </div>
 
-        {/* CHARTS FOR SECTION 1 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
           
-          {/* Chart 1: Coulissant vs Ouvrant */}
           <div className="glass-card" style={{ padding: '20px' }}>
             <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Zap size={16} style={{ color: 'var(--accent-cyan)' }} />
-              Coulissant vs Ouvrant (Temps moyen)
+              Coulissant vs Ouvrant (Temps Moyen Réel vs Objectif)
             </h4>
             <div style={{ height: '230px' }}>
               <Bar data={coulissantVsOuvrantChartData} options={chartOptionsLight} />
             </div>
           </div>
 
-          {/* Chart 2: Temps par Gamme */}
-          <div className="glass-card" style={{ padding: '20px' }}>
-            <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Layers size={16} style={{ color: 'var(--accent-emerald)' }} />
-              Temps Moyen par Gamme
-            </h4>
-            <div style={{ height: '230px' }}>
-              <Bar data={gammeChartData} options={chartOptionsLight} />
-            </div>
-          </div>
-
-          {/* Chart 3: Impact Options */}
           <div className="glass-card" style={{ padding: '20px' }}>
             <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Box size={16} style={{ color: 'var(--accent-amber)' }} />
@@ -637,14 +930,13 @@ export default function Dashboard({ orders }) {
         </div>
       </div>
 
-      {/* 📌 SECTION 2: 📐 ANALYSE PAR TRANCHES DE HAUTEUR ET LARGEUR */}
+      {/* 📌 SECTION EXISTANTE 2: 📐 ANALYSE PAR TRANCHES DE HAUTEUR ET LARGEUR */}
       <div style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', borderBottom: '2px solid var(--border-color)', paddingBottom: '8px' }}>
           <Ruler style={{ color: 'var(--accent-emerald)' }} />
-          📐 2. Analyse par Tranches de Hauteur & Largeur (&lt; 1m à &gt; 4000mm)
+          📐 Analyse par Tranches de Hauteur & Largeur (&lt; 1m à &gt; 4000mm)
         </h3>
 
-        {/* Ratio Min / m² KPI Card */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '20px' }}>
           <div className="glass-card" style={{ padding: '20px', borderLeft: '4px solid var(--accent-emerald)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
@@ -660,10 +952,8 @@ export default function Dashboard({ orders }) {
           </div>
         </div>
 
-        {/* 2 CHARTS: TRANCHES DE HAUTEUR ET TRANCHES DE LARGEUR */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '20px' }}>
           
-          {/* Chart Tranches de Hauteur */}
           <div className="glass-card" style={{ padding: '20px' }}>
             <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Ruler size={16} style={{ color: 'var(--accent-cyan)' }} />
@@ -674,7 +964,6 @@ export default function Dashboard({ orders }) {
             </div>
           </div>
 
-          {/* Chart Tranches de Largeur */}
           <div className="glass-card" style={{ padding: '20px' }}>
             <h4 style={{ fontSize: '1rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Ruler size={16} style={{ color: 'var(--accent-purple)' }} />
@@ -686,61 +975,6 @@ export default function Dashboard({ orders }) {
           </div>
 
         </div>
-      </div>
-
-      {/* 📌 SECTION 3: 🚨 DÉTECTION DES COMMANDES EN COURS & RETARDS */}
-      <div className="glass-card" style={{ padding: '24px' }}>
-        <h3 style={{ fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
-          <ShieldAlert style={{ color: 'var(--accent-rose)' }} />
-          🚨 3. Suivi des Commandes en Cours & Détections de Retards ({stats.trackedEnCours.length})
-        </h3>
-
-        {stats.trackedEnCours.length === 0 ? (
-          <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.92rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
-            Aucune commande actuellement en cours de fabrication sur les postes atelier.
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '14px' }}>
-            {stats.trackedEnCours.map(o => (
-              <div
-                key={o.id}
-                style={{
-                  background: o.isDelayed ? '#fff1f2' : '#ffffff',
-                  border: o.isDelayed ? '2px solid #fecdd3' : '1px solid var(--border-color)',
-                  padding: '16px',
-                  borderRadius: 'var(--radius-sm)',
-                  boxShadow: 'var(--shadow-sm)'
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <span className="badge badge-purple">{o.id}</span>
-                  {o.isDelayed ? (
-                    <span className="badge" style={{ background: '#e11d48', color: '#fff', fontSize: '0.75rem' }}>
-                      ⚠️ RETARD (+{o.exceedMin} min)
-                    </span>
-                  ) : (
-                    <span className="badge badge-emerald" style={{ fontSize: '0.75rem' }}>
-                      🟢 DANS LES TEMPS
-                    </span>
-                  )}
-                </div>
-
-                <div style={{ fontWeight: '800', fontSize: '1rem', color: 'var(--text-primary)' }}>{o.nomCommande}</div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>Client : <strong>{o.client}</strong></div>
-                
-                <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed #cbd5e1', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Temps écoulé :</span>
-                  <strong style={{ color: o.isDelayed ? '#e11d48' : 'var(--accent-cyan)' }}>
-                    {formatDuration(o.elapsedMin)}
-                  </strong>
-                </div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textAlign: 'right', marginTop: '2px' }}>
-                  Objectif moyen : {formatDuration(stats.thresholdMinutes)}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
     </div>
