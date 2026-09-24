@@ -106,21 +106,38 @@ export async function saveAllCloudOrders(orders) {
 }
 
 /**
- * Delete an order from Supabase Cloud
+ * Delete an order from Supabase Cloud (both table and fallback)
  */
 export async function deleteCloudOrder(orderId) {
   if (!orderId) return;
+  const normId = String(orderId).trim().toUpperCase();
   try {
     const { error } = await supabase
       .from('suivie_orders')
       .delete()
-      .eq('id', orderId);
+      .or(`id.eq.${orderId},id.eq.${normId}`);
 
     if (error) {
       console.warn("Delete from 'suivie_orders' failed:", error.message);
     }
   } catch (e) {
     console.error("Error deleting cloud order:", e);
+  }
+
+  // Always purge from app_state fallback as well
+  await deleteAppStateFallback(orderId);
+}
+
+async function deleteAppStateFallback(orderId) {
+  try {
+    const normId = String(orderId).trim().toUpperCase();
+    const current = await fetchAppStateFallback();
+    if (Array.isArray(current)) {
+      const updated = current.filter(o => o && String(o.id || '').trim().toUpperCase() !== normId);
+      await saveAllAppStateFallback(updated);
+    }
+  } catch (e) {
+    console.error("Fallback delete failed", e);
   }
 }
 

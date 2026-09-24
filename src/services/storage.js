@@ -62,7 +62,8 @@ export const DEFAULT_COLORIS = [
 export function getDeletedOrderIds() {
   try {
     const data = localStorage.getItem(DELETED_IDS_KEY);
-    return data ? JSON.parse(data) : [];
+    const list = data ? JSON.parse(data) : [];
+    return Array.isArray(list) ? list.map(id => String(id || '').trim().toUpperCase()) : [];
   } catch (e) {
     return [];
   }
@@ -70,10 +71,11 @@ export function getDeletedOrderIds() {
 
 export function recordDeletedOrderId(orderId) {
   if (!orderId) return;
+  const normId = String(orderId).trim().toUpperCase();
   try {
     const list = getDeletedOrderIds();
-    if (!list.includes(orderId)) {
-      list.push(orderId);
+    if (!list.includes(normId)) {
+      list.push(normId);
       localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(list));
     }
   } catch (e) {}
@@ -138,18 +140,20 @@ export async function syncOrdersWithCloud(onSyncCompleted) {
     const rawLocalOrders = getOrders();
 
     // Filter out deleted IDs from both sources
-    const localOrders = (rawLocalOrders || []).filter(o => o && o.id && !deletedIds.includes(o.id));
+    const localOrders = (rawLocalOrders || []).filter(o => o && o.id && !deletedIds.includes(String(o.id).trim().toUpperCase()));
     
     let cloudOrders = [];
     if (rawCloudOrders && Array.isArray(rawCloudOrders)) {
-      // If any deleted order is still in cloud, purge it from cloud
-      rawCloudOrders.forEach(c => {
-        if (c && c.id && deletedIds.includes(c.id)) {
-          deleteCloudOrder(c.id);
-        } else if (c && c.id) {
-          cloudOrders.push(c);
+      for (const c of rawCloudOrders) {
+        if (c && c.id) {
+          const normCId = String(c.id).trim().toUpperCase();
+          if (deletedIds.includes(normCId)) {
+            deleteCloudOrder(c.id);
+          } else {
+            cloudOrders.push(c);
+          }
         }
-      });
+      }
     }
 
     if (cloudOrders && Array.isArray(cloudOrders)) {
@@ -157,25 +161,26 @@ export async function syncOrdersWithCloud(onSyncCompleted) {
       
       // Load local first
       localOrders.forEach(o => {
-        if (o && o.id) orderMap.set(o.id, o);
+        if (o && o.id) orderMap.set(String(o.id).trim().toUpperCase(), o);
       });
 
       // Override with cloud
       cloudOrders.forEach(c => {
         if (!c || !c.id) return;
-        const local = orderMap.get(c.id);
+        const normId = String(c.id).trim().toUpperCase();
+        const local = orderMap.get(normId);
         if (!local) {
-          orderMap.set(c.id, c);
+          orderMap.set(normId, c);
         } else {
           const localTime = new Date(local.updatedAt || local.createdAt || 0).getTime();
           const cloudTime = new Date(c.updatedAt || c.createdAt || 0).getTime();
           if (cloudTime >= localTime) {
-            orderMap.set(c.id, c);
+            orderMap.set(normId, c);
           }
         }
       });
 
-      const merged = Array.from(orderMap.values()).filter(o => o && o.id && !deletedIds.includes(o.id));
+      const merged = Array.from(orderMap.values()).filter(o => o && o.id && !deletedIds.includes(String(o.id).trim().toUpperCase()));
       merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
       saveOrdersLocally(merged);
@@ -193,7 +198,7 @@ export async function syncOrdersWithCloud(onSyncCompleted) {
 function saveOrdersLocally(orders) {
   const deletedIds = getDeletedOrderIds();
   const cleanOrders = orders
-    .filter(ord => ord && ord.id && !deletedIds.includes(ord.id))
+    .filter(ord => ord && ord.id && !deletedIds.includes(String(ord.id).trim().toUpperCase()))
     .map(ord => ({
       id: ord.id,
       orderCategory: ord.orderCategory || 'menuiserie',
@@ -206,6 +211,9 @@ function saveOrdersLocally(orders) {
       completedAt: ord.completedAt,
       durationMinutes: ord.durationMinutes,
       updatedAt: ord.updatedAt || new Date().toISOString(),
+      parentOrderId: ord.parentOrderId || null,
+      isSubOrder: Boolean(ord.isSubOrder),
+      subOrders: Array.isArray(ord.subOrders) ? ord.subOrders : [],
       articles: (ord.articles || []).map(a => ({
         id: a.id,
         designation: a.designation || '',
@@ -221,7 +229,8 @@ function saveOrdersLocally(orders) {
         typeLame: a.typeLame,
         typeCaisson: a.typeCaisson,
         typeManoeuvre: a.typeManoeuvre,
-        coloris: a.coloris
+        coloris: a.coloris,
+        isFinished: Boolean(a.isFinished)
       }))
     }));
 
@@ -263,7 +272,7 @@ export function getOrders() {
     }
   }
 
-  return list.filter(o => o && o.id && !deletedIds.includes(o.id));
+  return list.filter(o => o && o.id && !deletedIds.includes(String(o.id).trim().toUpperCase()));
 }
 
 // Save orders locally + push to cloud
@@ -373,12 +382,41 @@ export function updateOrderStatus(orderId, newStatus) {
 export function deleteOrder(orderId) {
   if (!orderId) return getOrders();
   
-  recordDeletedOrderId(orderId);
-  const orders = getOrders();
-  const updated = orders.filter(o => o.id !== orderId);
+  const normTargetId = String(orderId).trim().toUpperCase();
+  recordDeletedOrderId(normTargetId);
   
+  const orders = getOrders();
+  const targetOrder = orders.find(o => o && String(o.id || '').trim().toUpperCase() === normTargetId);
+  
+  const idsToDelete = new Set([normTargetId]);
+  if (targetOrder && Array.isArray(targetOrder.subOrders)) {
+    targetOrder.subOrders.forEach(subId => {
+      if (subId) idsToDelete.add(String(subId).trim().toUpperCase());
+    });
+  }
+
+  idsToDelete.forEach(id => recordDeletedOrderId(id));
+
+  // Remove target order and any of its suborders, and clean up parent order references
+  const updated = orders
+    .filter(o => o && o.id && !idsToDelete.has(String(o.id).trim().toUpperCase()))
+    .map(o => {
+      if (o && Array.isArray(o.subOrders)) {
+        return {
+          ...o,
+          subOrders: o.subOrders.filter(subId => !idsToDelete.has(String(subId).trim().toUpperCase()))
+        };
+      }
+      return o;
+    });
+
   saveOrdersLocally(updated);
-  deleteCloudOrder(orderId);
+  saveAllCloudOrders(updated);
+  
+  idsToDelete.forEach(id => {
+    deleteCloudOrder(id);
+  });
+
   return updated;
 }
 
@@ -397,7 +435,83 @@ export function clearAllOrders() {
   } catch (e) {
     console.error(e);
   }
+  saveAllCloudOrders([]);
   return [];
+}
+
+// Create a Sub-Order for orders launched > 24 hours ago
+export function createSubOrder(parentOrderId, selectedArticles, subOrderNotes = '') {
+  const orders = getOrders();
+  const parentOrder = orders.find(o => o.id === parentOrderId);
+  if (!parentOrder) return null;
+
+  const existingSubCount = (parentOrder.subOrders || []).length;
+  const subOrderId = `${parentOrder.id}-S${existingSubCount + 1}`;
+
+  const newSubOrder = {
+    id: subOrderId,
+    orderCategory: parentOrder.orderCategory || 'menuiserie',
+    nomCommande: `${parentOrder.nomCommande} (Sous-commande S${existingSubCount + 1})`,
+    client: parentOrder.client || '',
+    notes: subOrderNotes ? `[Sous-commande de ${parentOrder.id}] ${subOrderNotes}` : `[Sous-commande de ${parentOrder.id}] Articles non finis après +24h`,
+    status: 'en_attente',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    parentOrderId: parentOrder.id,
+    isSubOrder: true,
+    subOrders: [],
+    articles: selectedArticles.map((art, idx) => ({
+      ...art,
+      id: `${subOrderId}-ART-${idx + 1}`,
+      isFinished: false
+    }))
+  };
+
+  const updatedSubOrdersList = [...(parentOrder.subOrders || []), subOrderId];
+  const updatedParentOrder = {
+    ...parentOrder,
+    subOrders: updatedSubOrdersList,
+    updatedAt: new Date().toISOString()
+  };
+
+  const newOrdersList = [newSubOrder, ...orders.map(o => o.id === parentOrderId ? updatedParentOrder : o)];
+  saveOrders(newOrdersList);
+
+  return newSubOrder;
+}
+
+export function toggleArticleFinished(orderId, articleId) {
+  const orders = getOrders();
+  let modifiedOrder = null;
+
+  const updated = orders.map(ord => {
+    if (ord.id === orderId) {
+      const updatedArticles = (ord.articles || []).map(art => {
+        if (art.id === articleId) {
+          return { ...art, isFinished: !art.isFinished };
+        }
+        return art;
+      });
+
+      const allFinished = updatedArticles.length > 0 && updatedArticles.every(a => a.isFinished);
+      let newStatus = ord.status;
+      if (allFinished && ord.status === 'en_cours') {
+        newStatus = 'fini';
+      }
+
+      modifiedOrder = {
+        ...ord,
+        articles: updatedArticles,
+        status: newStatus,
+        updatedAt: new Date().toISOString()
+      };
+      return modifiedOrder;
+    }
+    return ord;
+  });
+
+  saveOrders(updated);
+  return updated;
 }
 
 // Utility: Format duration in readable French text

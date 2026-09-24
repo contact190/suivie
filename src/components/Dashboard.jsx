@@ -26,7 +26,10 @@ import {
   Hourglass,
   Ruler,
   Activity,
-  ShieldAlert
+  ShieldAlert,
+  GitBranch,
+  AlertCircle,
+  PackageCheck
 } from 'lucide-react';
 import { formatDuration } from '../services/storage';
 
@@ -212,6 +215,37 @@ export default function Dashboard({ orders }) {
       };
     });
 
+    // 8. 🆕 SOUS-COMMANDES & NON-FINIS METRICS (Calculs requis par l'utilisateur)
+    // a) Nombre moyen de sous-commandes par commande
+    const subOrdersList = orders.filter(o => o.isSubOrder);
+    const totalSubOrders = subOrdersList.length;
+    const parentOrdersCount = orders.filter(o => !o.isSubOrder).length;
+    const avgSubOrdersPerOrder = parentOrdersCount > 0 ? (totalSubOrders / parentOrdersCount).toFixed(2) : '0.00';
+
+    // b) Nombre moyen des articles non-finis par commande
+    let totalUnfinishedArticles = 0;
+    let totalUnfinishedQty = 0;
+
+    orders.forEach(o => {
+      if (o.status !== 'fini') {
+        const unfinished = (o.articles || []).filter(a => !a.isFinished);
+        totalUnfinishedArticles += unfinished.length;
+        unfinished.forEach(a => {
+          totalUnfinishedQty += (parseInt(a.quantity) || 1);
+        });
+      }
+    });
+
+    const avgUnfinishedArticlesPerOrder = totalOrders > 0 ? (totalUnfinishedArticles / totalOrders).toFixed(2) : '0.00';
+    const avgUnfinishedQtyPerOrder = totalOrders > 0 ? (totalUnfinishedQty / totalOrders).toFixed(2) : '0.00';
+
+    // c) Commandes lancées > 24h ago
+    const ordersOver24h = enCoursOrders.filter(o => {
+      if (!o.launchedAt) return false;
+      const elapsedMinutes = (Date.now() - new Date(o.launchedAt).getTime()) / (1000 * 60);
+      return elapsedMinutes >= 24 * 60; // 24 Hours
+    });
+
     return {
       totalOrders,
       enAttente,
@@ -235,7 +269,16 @@ export default function Dashboard({ orders }) {
       gammeLabels,
       gammeAvgTimes,
       trackedEnCours,
-      thresholdMinutes
+      thresholdMinutes,
+      // New Sub-orders & Unfinished metrics:
+      totalSubOrders,
+      parentOrdersCount,
+      avgSubOrdersPerOrder,
+      totalUnfinishedArticles,
+      totalUnfinishedQty,
+      avgUnfinishedArticlesPerOrder,
+      avgUnfinishedQtyPerOrder,
+      ordersOver24h
     };
   }, [orders]);
 
@@ -326,8 +369,63 @@ export default function Dashboard({ orders }) {
           Tableau de Bord Productivité & Analyse de Fabrication
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-          Indicateurs de vitesse par Type, Gamme, Options (Caisson/Fixe), Dimensions et Détection des retards.
+          Indicateurs de vitesse par Type, Gamme, Options, Non-Finis et Sous-Commandes (+24h).
         </p>
+      </div>
+
+      {/* 📌 SECTION SPECIFIQUE DE CHERCHÉE : 🔄 SOU-COMMANDES ET ARTICLES NON FINIS */}
+      <div style={{ marginBottom: '32px' }}>
+        <h3 style={{ fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', borderBottom: '2px solid var(--border-color)', paddingBottom: '8px' }}>
+          <GitBranch style={{ color: 'var(--accent-amber)' }} />
+          🔄 Suivi des Sous-Commandes & Articles Non Finis
+        </h3>
+
+        {/* 3 HIGHLIGHT KPI CARDS FOR USER SPECIFIC REQUEST */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+          
+          {/* KPI 1: NOMBRE MOYEN DES NON FINI PAR COMMANDE */}
+          <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-amber)', background: 'linear-gradient(135deg, #ffffff 0%, #fffbeb 100%)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#b45309' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>MOYENNE NON FINIS / CMD</span>
+              <AlertCircle size={22} style={{ color: 'var(--accent-amber)' }} />
+            </div>
+            <div style={{ fontSize: '2.3rem', fontWeight: '800', marginTop: '6px', color: 'var(--accent-amber)' }}>
+              {stats.avgUnfinishedArticlesPerOrder}
+            </div>
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              <strong>{stats.totalUnfinishedArticles}</strong> articles non finis au total ({stats.totalUnfinishedQty} pièces)
+            </div>
+          </div>
+
+          {/* KPI 2: NOMBRE MOYEN DE SOUS COMMANDES PAR COMMANDE */}
+          <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-purple)', background: 'linear-gradient(135deg, #ffffff 0%, #faf5ff 100%)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#6b21a8' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>SOUS-COMMANDES / CMD</span>
+              <GitBranch size={22} style={{ color: 'var(--accent-purple)' }} />
+            </div>
+            <div style={{ fontSize: '2.3rem', fontWeight: '800', marginTop: '6px', color: 'var(--accent-purple)' }}>
+              {stats.avgSubOrdersPerOrder}
+            </div>
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              <strong>{stats.totalSubOrders}</strong> sous-commande(s) créée(s) pour {stats.parentOrdersCount} commande(s) principales
+            </div>
+          </div>
+
+          {/* KPI 3: COMMANDES LANCÉES > 24H */}
+          <div className="glass-card" style={{ padding: '20px', borderLeft: '5px solid var(--accent-rose)', background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#be123c' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase' }}>COMMANDES EN COURS &gt; 24H</span>
+              <Clock size={22} style={{ color: 'var(--accent-rose)' }} />
+            </div>
+            <div style={{ fontSize: '2.3rem', fontWeight: '800', marginTop: '6px', color: 'var(--accent-rose)' }}>
+              {stats.ordersOver24h.length}
+            </div>
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              Éligibles pour création d'une sous-commande
+            </div>
+          </div>
+
+        </div>
       </div>
 
       {/* 📌 SECTION 1: ⏱️ TEMPS DE FABRICATION & PRODUCTIVITÉ */}

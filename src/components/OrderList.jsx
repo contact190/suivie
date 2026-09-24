@@ -1,18 +1,19 @@
 import React, { useState } from 'react';
-import { Search, PlayCircle, CheckCircle, Clock, QrCode, Trash2, Filter, Edit3, Disc, Layers, HardDrive, Sparkles, ChevronDown, ChevronRight, Box, Maximize2, ChevronsUpDown, Calendar } from 'lucide-react';
-import { updateOrderStatus, deleteOrder, formatDuration, cleanupStorageQuota } from '../services/storage';
+import { Search, PlayCircle, CheckCircle, Clock, QrCode, Trash2, Filter, Edit3, Disc, Layers, HardDrive, Sparkles, ChevronDown, ChevronRight, ChevronsUpDown, GitBranch, PlusCircle } from 'lucide-react';
+import { updateOrderStatus, deleteOrder, formatDuration, cleanupStorageQuota, toggleArticleFinished } from '../services/storage';
+import CreateSubOrderModal from './CreateSubOrderModal';
 
 export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrder, onPrintOrder }) {
   const [filterStatus, setFilterStatus] = useState('toutes');
   const [filterCategory, setFilterCategory] = useState('tous'); // 'tous' | 'menuiserie' | 'volet'
   const [searchTerm, setSearchTerm] = useState('');
   const [toastMsg, setToastMsg] = useState('');
-
-  // Track expanded order IDs for accordion functionality
   const [expandedOrders, setExpandedOrders] = useState({});
+  const [subOrderTargetOrder, setSubOrderTargetOrder] = useState(null);
+  const [deletingOrderId, setDeletingOrderId] = useState(null);
 
   const toggleExpand = (orderId, e) => {
-    if (e && e.target.closest('button')) return;
+    if (e) e.stopPropagation();
     setExpandedOrders(prev => ({
       ...prev,
       [orderId]: !prev[orderId]
@@ -35,12 +36,19 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
     onRefresh();
   };
 
-  const handleDelete = (orderId, e) => {
+  const confirmDelete = (orderId, e) => {
     if (e) e.stopPropagation();
-    if (window.confirm(`Êtes-vous sûr de vouloir supprimer la commande ${orderId} ?`)) {
-      deleteOrder(orderId);
-      onRefresh();
-    }
+    setDeletingOrderId(orderId);
+  };
+
+  const executeDelete = () => {
+    if (!deletingOrderId) return;
+    const targetId = deletingOrderId;
+    deleteOrder(targetId);
+    setDeletingOrderId(null);
+    setToastMsg(`🗑️ Commande ${targetId} supprimée avec succès !`);
+    setTimeout(() => setToastMsg(''), 4000);
+    onRefresh();
   };
 
   const handleCleanupStorage = () => {
@@ -48,6 +56,21 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
     setToastMsg('🧹 Espace mémoire navigateur optimisé avec succès !');
     setTimeout(() => setToastMsg(''), 3500);
     onRefresh();
+  };
+
+  const handleToggleArticle = (orderId, articleId, e) => {
+    if (e) e.stopPropagation();
+    toggleArticleFinished(orderId, articleId);
+    onRefresh();
+  };
+
+  // Helper: check if order was launched > 24 hours ago
+  const isLaunchedOver24h = (order) => {
+    if (!order.launchedAt) return false;
+    const launchTime = new Date(order.launchedAt).getTime();
+    if (isNaN(launchTime)) return false;
+    const elapsedMinutes = (Date.now() - launchTime) / (1000 * 60);
+    return elapsedMinutes >= 24 * 60; // 24 hours
   };
 
   // Filter & Search Logic
@@ -59,6 +82,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
       o.id.toLowerCase().includes(searchLower) ||
       o.nomCommande.toLowerCase().includes(searchLower) ||
       o.client.toLowerCase().includes(searchLower) ||
+      (o.parentOrderId && o.parentOrderId.toLowerCase().includes(searchLower)) ||
       o.articles.some(a => 
         (a.designation && a.designation.toLowerCase().includes(searchLower)) || 
         (a.gamme && a.gamme.toLowerCase().includes(searchLower)) ||
@@ -70,6 +94,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
   const countEnAttente = orders.filter(o => o.status === 'en_attente').length;
   const countEnCours = orders.filter(o => o.status === 'en_cours').length;
   const countFini = orders.filter(o => o.status === 'fini').length;
+  const countOver24h = orders.filter(o => isLaunchedOver24h(o)).length;
 
   return (
     <div className="animate-fade-in" style={{ maxWidth: '1240px', margin: '0 auto', paddingBottom: '40px' }}>
@@ -81,6 +106,27 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
         </div>
       )}
 
+      {/* Delete Confirmation Modal */}
+      {deletingOrderId && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.8)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 999999
+        }}>
+          <div className="glass-card" style={{ background: '#fff', padding: '24px', borderRadius: '12px', maxWidth: '420px', width: '100%', textAlign: 'center' }}>
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '12px', color: '#e11d48' }}>Confirmer la suppression</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '20px' }}>
+              Voulez-vous vraiment supprimer la commande <strong>{deletingOrderId}</strong> ? Cette action est irréversible.
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button className="btn btn-secondary" onClick={() => setDeletingOrderId(null)}>Annuler</button>
+              <button className="btn btn-danger" onClick={executeDelete}>Supprimer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
         <div>
@@ -89,7 +135,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
             Suivi des Commandes ({filteredOrders.length})
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-            Cliquez sur une ligne de commande pour ouvrir/fermer le détail des articles
+            Cliquez sur une ligne de commande pour afficher le détail des articles ou créer une sous-commande.
           </p>
         </div>
 
@@ -163,6 +209,12 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
           >
             <CheckCircle size={14} /> Fini ({countFini})
           </button>
+
+          {countOver24h > 0 && (
+            <span className="badge badge-amber" style={{ fontSize: '0.75rem', padding: '4px 8px' }}>
+              ⏰ {countOver24h} lancée(s) &gt; 24h
+            </span>
+          )}
         </div>
 
         {/* Search Bar */}
@@ -172,7 +224,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
             type="text"
             className="form-input"
             style={{ paddingLeft: '36px' }}
-            placeholder="Rechercher une commande..."
+            placeholder="Rechercher (ex: CMD, client, gamme)..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -206,15 +258,19 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
           {filteredOrders.map((order) => {
             const isVolet = order.orderCategory === 'volet';
             const isExpanded = Boolean(expandedOrders[order.id]);
-            const totalQty = order.articles.reduce((acc, a) => acc + a.quantity, 0);
+            const totalQty = order.articles.reduce((acc, a) => acc + (a.quantity || 1), 0);
             const isPending = order.status === 'en_attente';
+            const launchedOver24h = isLaunchedOver24h(order);
+            const hasSubOrders = (order.subOrders || []).length > 0;
 
             return (
               <div
                 key={order.id}
                 className="glass-card"
                 style={{
-                  borderLeft: isVolet ? '5px solid var(--accent-purple)' : '5px solid var(--accent-cyan)',
+                  borderLeft: order.isSubOrder
+                    ? '5px solid var(--accent-amber)'
+                    : isVolet ? '5px solid var(--accent-purple)' : '5px solid var(--accent-cyan)',
                   transition: 'all 0.2s ease'
                 }}
               >
@@ -234,7 +290,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                     borderRadius: isExpanded ? 'var(--radius-md) var(--radius-md) 0 0' : 'var(--radius-md)'
                   }}
                 >
-                  {/* Left Column: Chevron + ID + Title + Client */}
+                  {/* Left Column: Chevron + ID + Sub-order badge + Title + Client */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: '300px' }}>
                     <div style={{ color: 'var(--text-muted)' }}>
                       {isExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -242,11 +298,29 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span className={`badge ${isVolet ? 'badge-purple' : 'badge-cyan'}`} style={{ fontSize: '0.8rem' }}>
+                        <span className={`badge ${order.isSubOrder ? 'badge-amber' : isVolet ? 'badge-purple' : 'badge-cyan'}`} style={{ fontSize: '0.8rem' }}>
                           {order.id}
                         </span>
                         
-                        {isVolet && (
+                        {order.isSubOrder && (
+                          <span className="badge badge-amber" style={{ fontSize: '0.72rem', padding: '2px 6px' }}>
+                            <GitBranch size={11} /> Sous-commande de {order.parentOrderId}
+                          </span>
+                        )}
+
+                        {hasSubOrders && (
+                          <span className="badge badge-cyan" style={{ fontSize: '0.72rem', padding: '2px 6px' }}>
+                            📦 {order.subOrders.length} sous-commande(s)
+                          </span>
+                        )}
+
+                        {launchedOver24h && (
+                          <span className="badge badge-amber" style={{ fontSize: '0.72rem', padding: '2px 6px', animation: 'pulse 2s infinite' }}>
+                            ⏰ Lancée &gt; 24h
+                          </span>
+                        )}
+
+                        {isVolet && !order.isSubOrder && (
                           <span className="badge badge-purple" style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
                             <Disc size={11} /> VOLET
                           </span>
@@ -278,6 +352,27 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
 
                   {/* Right Column: Quick Action Buttons */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={(e) => e.stopPropagation()}>
+                    
+                    {/* BUTTON TO CREATE SUB-ORDER FOR ORDERS LAUNCHED > 24H AGO */}
+                    {launchedOver24h && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSubOrderTargetOrder(order);
+                        }}
+                        style={{
+                          background: 'rgba(217, 119, 6, 0.1)',
+                          borderColor: 'var(--accent-amber)',
+                          color: '#b45309',
+                          fontWeight: '700'
+                        }}
+                        title="Créer une sous-commande avec les articles non finis"
+                      >
+                        <PlusCircle size={14} /> Sous-commande (&gt;24h)
+                      </button>
+                    )}
+
                     <button
                       className="btn btn-secondary btn-sm"
                       onClick={() => onPrintOrder(order)}
@@ -324,7 +419,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
 
                     <button
                       className="btn btn-danger btn-sm"
-                      onClick={(e) => handleDelete(order.id, e)}
+                      onClick={(e) => confirmDelete(order.id, e)}
                       title="Supprimer"
                     >
                       <Trash2 size={14} />
@@ -339,6 +434,36 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                     {order.notes && (
                       <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
                         <strong>Notes / Consignes :</strong> {order.notes}
+                      </div>
+                    )}
+
+                    {/* Sub-Orders List Link if any */}
+                    {hasSubOrders && (
+                      <div style={{ background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.25)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.85rem' }}>
+                        <strong style={{ color: '#b45309' }}>Sous-commandes rattachées :</strong>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+                          {order.subOrders.map(subId => (
+                            <span key={subId} className="badge badge-amber" style={{ fontSize: '0.78rem' }}>
+                              <GitBranch size={11} /> {subId}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Bar for Sub-order creation if launched > 24h */}
+                    {launchedOver24h && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fffbeb', border: '1px solid #fef3c7', padding: '12px 16px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', gap: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: '0.88rem', color: '#92400e' }}>
+                          ⏰ Cette commande a été lancée depuis plus de 24 heures. Vous pouvez extraire les articles non finis vers une sous-commande.
+                        </div>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => setSubOrderTargetOrder(order)}
+                          style={{ background: 'var(--gradient-amber)', border: 'none', whiteSpace: 'nowrap' }}
+                        >
+                          <PlusCircle size={15} /> Créer une Sous-Commande
+                        </button>
                       </div>
                     )}
 
@@ -368,11 +493,12 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                                 <th style={{ padding: '8px 12px', textAlign: 'left' }}>Option Fixe</th>
                               </>
                             )}
+                            <th style={{ padding: '8px 12px', textAlign: 'center' }}>Statut Article</th>
                           </tr>
                         </thead>
                         <tbody>
                           {order.articles.map((art, idx) => (
-                            <tr key={art.id || idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            <tr key={art.id || idx} style={{ borderBottom: '1px solid var(--border-color)', background: art.isFinished ? 'rgba(16, 185, 129, 0.04)' : 'transparent' }}>
                               <td style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
                               <td style={{ padding: '8px 12px', fontWeight: '600' }}>
                                 {art.typeMenuiserie ? `${art.typeMenuiserie}` : art.designation}
@@ -406,6 +532,18 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                                   </td>
                                 </>
                               )}
+
+                              <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                <button
+                                  type="button"
+                                  className={`btn btn-sm ${art.isFinished ? 'btn-emerald' : 'btn-secondary'}`}
+                                  onClick={(e) => handleToggleArticle(order.id, art.id, e)}
+                                  style={{ fontSize: '0.75rem', padding: '3px 8px' }}
+                                  title="Cliquer pour changer le statut de cet article"
+                                >
+                                  {art.isFinished ? '✓ Fini' : '⏳ Non Fini'}
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -415,7 +553,7 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                     {/* Timestamps */}
                     <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '0.82rem', color: 'var(--text-muted)', paddingTop: '10px', borderTop: '1px dashed var(--border-color)' }}>
                       <div>📅 <strong>Créé le :</strong> {new Date(order.createdAt).toLocaleDateString('fr-FR')} à {new Date(order.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
-                      {order.launchedAt && <div>🚀 <strong>Lancé le :</strong> {new Date(order.launchedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>}
+                      {order.launchedAt && <div>🚀 <strong>Lancé le :</strong> {new Date(order.launchedAt).toLocaleDateString('fr-FR')} à {new Date(order.launchedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>}
                       {order.completedAt && (
                         <div style={{ color: 'var(--accent-emerald)', fontWeight: 'bold' }}>
                           ✅ <strong>Terminé le :</strong> {new Date(order.completedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} (Durée: {formatDuration(order.durationMinutes)})
@@ -428,6 +566,19 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
             );
           })}
         </div>
+      )}
+
+      {/* Sub-order Modal */}
+      {subOrderTargetOrder && (
+        <CreateSubOrderModal
+          parentOrder={subOrderTargetOrder}
+          onClose={() => setSubOrderTargetOrder(null)}
+          onSubOrderCreated={(newSubOrder) => {
+            setToastMsg(`🎉 Sous-commande ${newSubOrder.id} créée avec succès !`);
+            setTimeout(() => setToastMsg(''), 4500);
+            onRefresh();
+          }}
+        />
       )}
     </div>
   );
