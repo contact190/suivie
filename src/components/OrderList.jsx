@@ -493,7 +493,6 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                                 <th style={{ padding: '8px 12px', textAlign: 'left' }}>Option Fixe</th>
                               </>
                             )}
-                            <th style={{ padding: '8px 12px', textAlign: 'center' }}>Statut Article</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -534,18 +533,6 @@ export default function OrderList({ orders, onRefresh, onOpenScanner, onEditOrde
                                   </td>
                                 </>
                               )}
-
-                              <td style={{ padding: '8px 12px', textAlign: 'center' }}>
-                                <button
-                                  type="button"
-                                  className={`btn btn-sm ${art.isFinished ? 'btn-emerald' : 'btn-secondary'}`}
-                                  onClick={(e) => handleToggleArticle(order.id, art.id, e)}
-                                  style={{ fontSize: '0.75rem', padding: '3px 8px' }}
-                                  title="Cliquer pour changer le statut de cet article"
-                                >
-                                  {art.isFinished ? '✓ Fini' : '⏳ Non Fini'}
-                                </button>
-                              </td>
                             </tr>
                           ))}
                         </tbody>

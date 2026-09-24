@@ -22,6 +22,8 @@ export default function App() {
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [isCloudConnected, setIsCloudConnected] = useState(true);
 
+  const [initialOrderId, setInitialOrderId] = useState('');
+
   // Load orders on mount & trigger Supabase Cloud sync & realtime subscription
   const loadOrders = () => {
     const data = getOrders();
@@ -52,9 +54,15 @@ export default function App() {
       });
     });
 
-    // Auto open mobile atelier view if URL contains ?mode=mobile or #mobile
+    // Auto open mobile atelier view if URL contains ?mode=mobile or #mobile or ?order=...
     const searchParams = new URLSearchParams(window.location.search);
-    if (searchParams.get('mode') === 'mobile' || window.location.hash === '#mobile') {
+    const orderParam = searchParams.get('order') || searchParams.get('id') || (window.location.hash.startsWith('#CMD-') ? window.location.hash.substring(1) : '');
+
+    if (orderParam) {
+      setInitialOrderId(orderParam);
+    }
+
+    if (searchParams.get('mode') === 'mobile' || window.location.hash === '#mobile' || window.location.hash.startsWith('#mobile') || orderParam) {
       setActiveTab('mobile-atelier');
     }
 
@@ -134,6 +142,24 @@ export default function App() {
   const countEnCours = orders.filter(o => o.status === 'en_cours').length;
   const countEnAttente = orders.filter(o => o.status === 'en_attente').length;
 
+  if (activeTab === 'mobile-atelier') {
+    return (
+      <div style={{ minHeight: '100vh', background: '#f8fafc', padding: '12px 12px 30px 12px' }}>
+        <MobileAtelierView
+          onOrdersUpdated={loadOrders}
+          onSwitchToDesktop={() => setActiveTab('list')}
+          initialOrderId={initialOrderId}
+        />
+        {selectedOrderForPrint && (
+          <FicheAtelierModal
+            order={selectedOrderForPrint}
+            onClose={() => setSelectedOrderForPrint(null)}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       
@@ -189,18 +215,6 @@ export default function App() {
 
           {/* Navigation Tabs */}
           <nav style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              className={`btn ${activeTab === 'mobile-atelier' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('mobile-atelier')}
-              style={{
-                borderColor: activeTab === 'mobile-atelier' ? 'transparent' : 'var(--accent-cyan)',
-                color: activeTab === 'mobile-atelier' ? '#fff' : 'var(--accent-cyan)',
-                fontWeight: '700'
-              }}
-            >
-              <Smartphone size={18} /> Atelier Mobile
-            </button>
-
             <button
               className="btn btn-secondary"
               onClick={() => setIsMobileQRModalOpen(true)}

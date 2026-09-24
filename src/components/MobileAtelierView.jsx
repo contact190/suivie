@@ -63,7 +63,7 @@ function playScanBeep(type = 'success') {
   }
 }
 
-export default function MobileAtelierView({ onOrdersUpdated }) {
+export default function MobileAtelierView({ onOrdersUpdated, onSwitchToDesktop, initialOrderId }) {
   // Screen mode: 'scan' (Écran 1: Caméra) | 'order' (Écran 2: Actions Lancé/Fini)
   const [currentScreen, setCurrentScreen] = useState('scan');
   
@@ -95,7 +95,10 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
 
   useEffect(() => {
     refreshOrders();
-  }, []);
+    if (initialOrderId) {
+      selectOrder(initialOrderId);
+    }
+  }, [initialOrderId]);
 
   // Handle screen changes to auto-start/stop camera
   useEffect(() => {
@@ -111,9 +114,23 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
 
   // Select an order by ID & navigate to Screen 2
   const selectOrder = (orderId) => {
-    const cleanId = String(orderId).trim().toUpperCase();
+    if (!orderId) return;
+    let cleanId = String(orderId).trim();
+    if (cleanId.includes('?order=')) {
+      cleanId = cleanId.split('?order=')[1].split('&')[0].split('#')[0];
+    } else if (cleanId.includes('?id=')) {
+      cleanId = cleanId.split('?id=')[1].split('&')[0].split('#')[0];
+    } else if (cleanId.includes('#')) {
+      const parts = cleanId.split('#');
+      const last = parts[parts.length - 1];
+      if (last.startsWith('CMD-') || last.startsWith('SO-') || last.includes('-S')) {
+        cleanId = last;
+      }
+    }
+    cleanId = cleanId.trim().toUpperCase();
+
     const list = getOrders();
-    const found = list.find(o => o.id.toUpperCase() === cleanId);
+    const found = list.find(o => String(o.id || '').trim().toUpperCase() === cleanId);
     
     if (found) {
       setMatchedOrder(found);
@@ -122,7 +139,7 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
       stopCamera();
       setCurrentScreen('order');
     } else {
-      setScanError(`Commande "${orderId}" introuvable dans la base.`);
+      setScanError(`Commande "${cleanId}" introuvable dans la base.`);
       playScanBeep('error');
     }
   };
@@ -296,14 +313,26 @@ export default function MobileAtelierView({ onOrdersUpdated }) {
                 </div>
               </div>
 
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={refreshOrders}
-                style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', border: 'none', padding: '8px' }}
-                title="Rafraîchir"
-              >
-                <RotateCcw size={16} />
-              </button>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {onSwitchToDesktop && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={onSwitchToDesktop}
+                    style={{ background: 'rgba(255,255,255,0.12)', color: '#fff', border: 'none', padding: '6px 10px', fontSize: '0.78rem', fontWeight: 'bold' }}
+                    title="Basculer vers la vue Bureau"
+                  >
+                    💻 Mode Bureau
+                  </button>
+                )}
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={refreshOrders}
+                  style={{ background: 'rgba(255,255,255,0.12)', color: '#fff', border: 'none', padding: '8px' }}
+                  title="Rafraîchir"
+                >
+                  <RotateCcw size={16} />
+                </button>
+              </div>
             </div>
           </div>
 

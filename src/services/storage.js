@@ -485,13 +485,22 @@ export function clearAllOrders() {
 }
 
 // Create a Sub-Order for orders launched > 24 hours ago
-export function createSubOrder(parentOrderId, selectedArticles, subOrderNotes = '') {
+export function createSubOrder(parentOrderId, selectedArticlesOrIds, subOrderNotes = '') {
   const orders = getOrders();
-  const parentOrder = orders.find(o => o.id === parentOrderId);
+  const parentNormId = String(parentOrderId || '').trim().toUpperCase();
+  const parentOrder = orders.find(o => String(o.id || '').trim().toUpperCase() === parentNormId);
   if (!parentOrder) return null;
+
+  // Extract list of selected non-finished article IDs
+  const selectedArticleIds = Array.isArray(selectedArticlesOrIds)
+    ? selectedArticlesOrIds.map(a => (typeof a === 'object' ? a.id : a))
+    : [];
 
   const existingSubCount = (parentOrder.subOrders || []).length;
   const subOrderId = `${parentOrder.id}-S${existingSubCount + 1}`;
+
+  // Filter non-finished articles for the sub-order
+  const unfinishedArticles = (parentOrder.articles || []).filter(a => selectedArticleIds.includes(a.id));
 
   const newSubOrder = {
     id: subOrderId,
@@ -505,21 +514,47 @@ export function createSubOrder(parentOrderId, selectedArticles, subOrderNotes = 
     parentOrderId: parentOrder.id,
     isSubOrder: true,
     subOrders: [],
-    articles: selectedArticles.map((art, idx) => ({
+    articles: unfinishedArticles.map((art, idx) => ({
       ...art,
       id: `${subOrderId}-ART-${idx + 1}`,
       isFinished: false
     }))
   };
 
-  const updatedSubOrdersList = [...(parentOrder.subOrders || []), subOrderId];
+  const now = new Date().toISOString();
+
+  // Update parent order:
+  // Articles NOT selected as non-fini are automatically marked as finished!
+  const updatedParentArticles = (parentOrder.articles || []).map(art => {
+    if (selectedArticleIds.includes(art.id)) {
+      return { ...art, isFinished: false, subOrderTransferred: subOrderId };
+    } else {
+      return { ...art, isFinished: true };
+    }
+  });
+
+  // Calculate duration and mark parent order as finished ('fini')
+  const launchedAt = parentOrder.launchedAt || now;
+  const completedAt = now;
+  const launchTime = new Date(launchedAt).getTime();
+  const finishTime = new Date(completedAt).getTime();
+  const durationMinutes = Math.max(1, Math.round((finishTime - launchTime) / (1000 * 60)));
+
   const updatedParentOrder = {
     ...parentOrder,
-    subOrders: updatedSubOrdersList,
-    updatedAt: new Date().toISOString()
+    status: 'fini',
+    completedAt,
+    durationMinutes,
+    articles: updatedParentArticles,
+    subOrders: [...(parentOrder.subOrders || []), subOrderId],
+    updatedAt: now
   };
 
-  const newOrdersList = [newSubOrder, ...orders.map(o => o.id === parentOrderId ? updatedParentOrder : o)];
+  const newOrdersList = [
+    newSubOrder,
+    ...orders.map(o => String(o.id || '').trim().toUpperCase() === parentNormId ? updatedParentOrder : o)
+  ];
+
   saveOrders(newOrdersList);
 
   return newSubOrder;

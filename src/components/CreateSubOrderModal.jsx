@@ -121,8 +121,8 @@ export default function CreateSubOrderModal({ parentOrder, onClose, onSubOrderCr
           fontSize: '0.88rem',
           color: '#b45309'
         }}>
-          ⏱️ Commande lancée il y a <strong>{formatDuration(elapsedMinutes)}</strong> ({elapsedHours} heures).
-          Sélectionnez ci-dessous les articles <strong>non finis</strong> à détacher ou fabriquer dans une nouvelle sous-commande.
+          ⏱️ Commande lancée il y a <strong>{formatDuration(elapsedMinutes)}</strong> ({elapsedHours} heures).<br />
+          Cochez uniquement les articles <strong>NON FINIS</strong>. Ils intégreront la sous-commande, et la commande principale (<strong>{parentOrder.id}</strong>) sera automatiquement marquée <strong>Fini (Terminée)</strong>.
         </div>
 
         {errorMsg && (
